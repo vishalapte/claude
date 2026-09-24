@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# core.hooksPath points git here, which switches off the repo's own .git/hooks. Every hook
+# name in this directory is a symlink to this script, which runs the repo's own hook of the
+# same name, so pre-commit and friends keep working.
+hook="$(git rev-parse --git-common-dir)/hooks/${HOOK_NAME:-$(basename "$0")}"
+[ -x "$hook" ] && exec "$hook" "$@"
+exit 0

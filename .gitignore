@@ -1,0 +1,15 @@
+# The install extracts this repo with --strip-components=2, so every file under a top-level
+# directory lands in ~/.claude. dot-claude/ is the payload; any other top-level directory
+# would be extracted too, so none may be committed.
+/*/
+!/dot-claude/
+
+# Private data. The org list lives in ~/.claude/orgs.json, never here; orgs.example.json
+# is the template.
+orgs.json
+
+# Test runs and editors.
+__pycache__/
+*.pyc
+.DS_Store
+*.swp

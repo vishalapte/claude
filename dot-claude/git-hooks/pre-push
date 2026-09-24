@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Refuse a push outside the org list, then run the repo's own pre-push. git passes the
+# remote name and URL as $1 and $2, however the push was started (alias, script, bash -c).
+dir="$(dirname "$0")"
+python3 "$dir/_boundary.py" "$2" || exit 1
+HOOK_NAME=pre-push exec "$dir/_dispatch" "$@"
