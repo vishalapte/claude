@@ -6,7 +6,14 @@ commands ships them as its own Claude Code plugin.
 
 ## Install
 
-One command, no clone. Pick the form that matches the repo's visibility.
+**From a checkout**, which installs what is in it, unpushed changes included:
+
+    ./install            # --dry-run lists what would be replaced
+
+It replaces each file under `dot-claude/` in `~/.claude`, saving the previous `settings.json`
+and `CLAUDE.md` in `~/.claude/backups/` first.
+
+**Without a clone**, one command. Pick the form that matches the repo's visibility.
 
 **Private** (the default for this repo). `gh` supplies the auth:
 
@@ -17,6 +24,11 @@ One command, no clone. Pick the form that matches the repo's visibility.
 
     curl -fsSL https://github.com/vishalapte/claude/archive/refs/heads/main.tar.gz \
       | tar -xz -C ~/.claude --strip-components=2
+
+**Then run `./install` in each repo that installs into Claude** (racecar, and any other
+repo that ships an install). The download replaces `settings.json`, which removes the hooks
+those installs wrote, and nothing tells you: the hooks that would notice are the ones that
+were removed. The install is safe to re-run.
 
 Both overwrite only the files under `dot-claude/`. Credentials, history, projects and
 memory in `~/.claude` are never touched, and file modes are kept, so

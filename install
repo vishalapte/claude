@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Install this checkout's dot-claude/ into ~/.claude, replacing each file it ships.
+#
+# Replace, not merge: settings.json and CLAUDE.md are overwritten whole, which removes the
+# hooks and imports other repos' installs wrote into them. So run those installs again
+# afterwards (racecar, delphi, any repo that ships one); each is safe to re-run.
+#
+# Files in ~/.claude that dot-claude/ does not ship (credentials, history, projects, memory,
+# orgs.json, a repo's RACECAR.md) are never touched. The two files that are replaced whole
+# are copied to ~/.claude/backups/<timestamp>/ first.
+#
+# Installs what is in this checkout, including uncommitted and unpushed changes. The
+# download in README.md installs GitHub's main instead.
+#
+# Usage: ./install [--dry-run]
+# Target: CLAUDE_CONFIG_DIR, Claude Code's own variable for the config directory, else ~/.claude.
+set -euo pipefail
+
+SRC="$(cd "$(dirname "$0")" && pwd -P)/dot-claude"
+DEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run) DRY_RUN=1 ;;
+        *) echo "install: unknown argument: $arg (only --dry-run is accepted)" >&2; exit 2 ;;
+    esac
+done
+
+# What would change: every shipped file that is missing or differs at the destination.
+changed=()
+while IFS= read -r -d '' f; do
+    rel="${f#"$SRC"/}"
+    if [ -L "$f" ]; then
+        [ "$(readlink "$f")" = "$(readlink "$DEST/$rel" 2>/dev/null)" ] || changed+=("$rel")
+    elif ! cmp -s "$f" "$DEST/$rel"; then
+        changed+=("$rel")
+    fi
+done < <(find "$SRC" \( -type f -o -type l \) -print0 | sort -z)
+
+if [ "${#changed[@]}" -eq 0 ]; then
+    echo "install: $DEST already matches $SRC"
+    exit 0
+fi
+
+for rel in "${changed[@]}"; do
+    echo "install: $([ "$DRY_RUN" -eq 1 ] && echo "would replace" || echo "replacing") $DEST/$rel"
+done
+[ "$DRY_RUN" -eq 1 ] && exit 0
+
+backup="$DEST/backups/pre-install-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$backup"
+for f in settings.json CLAUDE.md; do
+    [ -e "$DEST/$f" ] && cp -a "$DEST/$f" "$backup/"
+done
+echo "install: previous settings.json and CLAUDE.md saved in $backup"
+
+mkdir -p "$DEST"
+tar -C "$SRC" -cf - . | tar -xf - -C "$DEST"
+
+[ -r "$DEST/orgs.json" ] || echo "install: $DEST/orgs.json is missing, so every push Claude runs will be refused; copy orgs.example.json there and list your owners" >&2
+echo "install: done. Now re-run each repo's ./install (racecar, delphi) to put back their hooks and imports."

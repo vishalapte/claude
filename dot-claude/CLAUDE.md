@@ -23,3 +23,10 @@ enforces them; do not restate them here. What settings.json cannot hold is the i
 ## Named Repos
 Refer to a repo by slug. A slug resolves to `~/dev/<org>/<slug>`, one directory per GitHub
 owner; find it with `ls -d ~/dev/*/<slug>`.
+
+## Installed by repos
+A repo's `./install` writes its own file beside this one. The line below is a placeholder that
+racecar's `./install` replaces with the import of its `RACECAR.md`; without racecar it stays an
+inert comment.
+
+<!-- RACECAR -->

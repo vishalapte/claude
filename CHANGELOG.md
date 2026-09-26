@@ -5,6 +5,21 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.2.0 - 2026-09-26
+
+### Added
+- **`./install` installs `~/.claude` from a checkout**, so what lands is what you are looking
+  at, unpushed changes included. It replaces each file under `dot-claude/` whole, first saving
+  the previous `settings.json` and `CLAUDE.md` in `~/.claude/backups/`, and warns when
+  `orgs.json` is missing. `--dry-run` lists what it would replace. The download still works
+  for a machine with no clone.
+- **`CLAUDE.md` carries a placeholder for repo installs.** racecar's `./install` replaces it
+  with the `@RACECAR.md` import; without racecar it stays an inert comment, so the base config
+  never depends on racecar being present.
+- **The README says to re-run each repo's `./install` after installing this one.** Replacing
+  `settings.json` removes the hooks those installs wrote, and nothing reports it, because the
+  hooks that would notice are the ones removed.
+
 ## 0.1.1 - 2026-09-26
 
 ### Fixed
