@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
-# Refuse a push outside the org list, then run the repo's own pre-push. git passes the
-# remote name and URL as $1 and $2, however the push was started (alias, script, bash -c).
+# Refuse a push outside the org list, and any push that deletes a remote ref, then run the
+# repo's own pre-push. git passes the remote name and URL as $1 and $2, however the push was
+# started (alias, script, bash -c).
 dir="$(dirname "$0")"
 python3 "$dir/_boundary.py" "$2" || exit 1
-HOOK_NAME=pre-push exec "$dir/_dispatch" "$@"
+
+# One line per ref on stdin: <local ref> <local sha> <remote ref> <remote sha>. A deletion
+# has an all-zero local sha, whichever spelling asked for it (`:branch`, `--delete`, `-d`),
+# so it is caught here rather than by matching command text in settings.json. The lines are
+# kept byte for byte (the trailing `.` stops $(...) eating the last newline) so the repo's
+# own pre-push reads exactly what git sent.
+refs="$(cat; echo .)"
+refs="${refs%.}"
+while read -r _ local_sha remote_ref _; do
+    if [ -n "$local_sha" ] && [ -z "${local_sha//0/}" ]; then
+        echo "pre-push: refusing to delete $remote_ref on $1; deleting a remote branch is the owner's to do" >&2
+        exit 1
+    fi
+done <<<"$refs"
+
+printf '%s' "$refs" | HOOK_NAME=pre-push "$dir/_dispatch" "$@"

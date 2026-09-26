@@ -29,6 +29,11 @@ listed in `~/.claude/orgs.json`. That file is private and never in this repo; co
 `orgs.example.json` there and put your own owners in it. With no file, or a malformed one,
 every push is refused: the absence of the config protects rather than exposes.
 
+The same hook refuses any push that deletes a remote ref. git marks a deletion with an
+all-zero sha however it was typed (`:branch`, `--delete`, `-d`), so the hook catches every
+spelling, where a `settings.json` rule matches only the text it names. A rule for the
+`:branch` form also cannot be written without Claude Code warning about it on every start.
+
 `settings.json` points git at the hooks through `env` (`GIT_CONFIG_*` setting
 `core.hooksPath`), so it applies only to commands Claude Code runs, never to your terminal.
 Git hands the hook the real destination URL however the push was started (an alias, a

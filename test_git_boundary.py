@@ -41,8 +41,9 @@ class GitBoundary(unittest.TestCase):
                               capture_output=True, text=True, check=check)
 
     def repo_hook(self, name, marker):
+        """A repo hook that records its stdin in `marker`, so a test can see it ran and what it got."""
         hook = self.repo / ".git" / "hooks" / name
-        hook.write_text(f"#!/bin/sh\ncat > /dev/null\ntouch {self.tmp / marker}\n")
+        hook.write_text(f"#!/bin/sh\ncat > {self.tmp / marker}\n")
         hook.chmod(0o755)
 
     def boundary(self, url):
@@ -96,10 +97,27 @@ class GitBoundary(unittest.TestCase):
     def test_allowed_push_runs_repo_pre_push_with_stdin(self):
         self.repo_hook("pre-push", "repo-pre-push-ran")
         out = subprocess.run([str(HOOKS / "pre-push"), "origin", "https://github.com/me/app.git"],
-                             cwd=self.repo, env=self.env, input="refs/heads/x abc refs/heads/x def\n",
+                             cwd=self.repo, env=self.env, input=self.REFS,
                              capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertTrue((self.tmp / "repo-pre-push-ran").exists())
+        self.assertEqual((self.tmp / "repo-pre-push-ran").read_text(), self.REFS)
+
+    # --- deleting a remote ref is refused, however it was spelled
+
+    REFS = "refs/heads/x abc refs/heads/x def\nrefs/heads/y 123 refs/heads/y 456\n"
+
+    def test_delete_refused(self):
+        self.repo_hook("pre-push", "repo-pre-push-ran")
+        for zeros in ("0" * 40, "0" * 64):  # sha1 and sha256 repos
+            with self.subTest(width=len(zeros)):
+                out = subprocess.run(
+                    [str(HOOKS / "pre-push"), "origin", "https://github.com/me/app.git"],
+                    cwd=self.repo, env=self.env,
+                    input=f"refs/heads/x abc refs/heads/x def\n(delete) {zeros} refs/heads/gone abc\n",
+                    capture_output=True, text=True)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn("refusing to delete refs/heads/gone", out.stderr)
+                self.assertFalse((self.tmp / "repo-pre-push-ran").exists())
 
     def test_refused_push_skips_repo_pre_push(self):
         self.repo_hook("pre-push", "repo-pre-push-ran")
