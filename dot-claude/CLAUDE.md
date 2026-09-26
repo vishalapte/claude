@@ -11,8 +11,7 @@ enforces them; do not restate them here. What settings.json cannot hold is the i
   history (force-push, deleting a remote branch, pushing to `main`/`master`), or
   destroying data with no copy (`manage.py flush`) is irreversible: it is blocked. A
   command no rule matches is judged by the same line.
-- **Commits and pushes are mine.** An agent's job ends at emitting the runbook and telling
-  me the one line. Approving a prompt is a per-action act, not a standing grant.
+- **Commits and pushes are mine.** Approving a prompt is a per-action act, not a standing grant.
 - **Only what `permissions.deny` names is blocked.** Everything else prompts at most, so do
   not tell me something is blocked when it is not: an agent that believes `git commit`
   cannot run will report a runbook as un-runnable and route around a prompt I would have

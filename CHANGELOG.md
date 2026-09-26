@@ -5,6 +5,28 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.3.0 - 2026-09-26
+
+### Added
+- **`hooks/compound-command-allow.py`, moved here from racecar and rewritten as one stdlib
+  Python file.** It answers Claude Code's prompt for a compound command (`a && b`, `a | b`)
+  when every part matches an `allow` rule, since Claude Code asks for those even when each
+  part is allowed alone. It is user configuration rather than a racecar standard. Five fixes
+  over racecar's copy:
+  - it reads `deny` and `ask`; it looked for a `disallow` key, which does not exist;
+  - it says nothing when a part runs a command it cannot see (`$(...)`, a backtick,
+    `<(...)`) or redirects to or from a file, where it used to approve `ls $(anything)`;
+  - it no longer crashes on an unclosed quote;
+  - it no longer cuts a command short at every `#`;
+  - a rule such as `ls *` now covers a bare `ls`, as it does in Claude Code.
+- **`test_compound_allow.py` tests the rules in `dot-claude/settings.json`**, so a rule is
+  tested as soon as it is added. For each `ask` and `deny` rule, the test also allows the same
+  command, so it fails if the hook ever stops reading `ask` and `deny`.
+
+### Changed
+- **`CLAUDE.md` no longer tells an agent to stop at a runbook and one line.** "Commits and
+  pushes are mine" stays, and so does "approving a prompt is a per-action act".
+
 ## 0.2.0 - 2026-09-26
 
 ### Added

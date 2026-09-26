@@ -58,6 +58,19 @@ in `settings.json`; other `gh` writes fall to the ask rules and the auto-mode cl
 
 Tests: `python3 -m unittest test_git_boundary`.
 
+## Auto-approving compound commands
+
+Claude Code asks before running a compound command (`a && b`, `a | b`) even when each part
+is allowed on its own. `dot-claude/hooks/compound-command-allow.py` approves it when every
+part matches an `allow` rule and no part matches an `ask` or `deny` rule. Otherwise it prints
+nothing, and Claude Code decides as it would without the hook.
+
+Tests: `python3 -m unittest test_compound_allow`. The test reads the rules in
+`dot-claude/settings.json`, turns each rule into a command that matches it, and checks what
+the hook does with that command. It also checks commands the hook must never approve
+whatever the rules say, such as one containing `$(...)`, which runs a second command no rule
+was checked against.
+
 ## Why the install needs no filter
 
 `--strip-components=2` drops the archive's top directory and `dot-claude/`. A top-level

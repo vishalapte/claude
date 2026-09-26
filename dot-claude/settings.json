@@ -124,5 +124,18 @@
     "GIT_CONFIG_COUNT": "1",
     "GIT_CONFIG_KEY_0": "core.hooksPath",
     "GIT_CONFIG_VALUE_0": "~/.claude/git-hooks"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/compound-command-allow.py"
+          }
+        ]
+      }
+    ]
   }
 }
