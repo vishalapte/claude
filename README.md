@@ -71,6 +71,19 @@ the hook does with that command. It also checks commands the hook must never app
 whatever the rules say, such as one containing `$(...)`, which runs a second command no rule
 was checked against.
 
+## Sizing an Omarchy display
+
+`dot-claude/skills/omarchy-display-sizing/` holds an Omarchy desktop's display sizes to one
+set of targets, for a fleet of 27" iMacs: monitor scale, bar icons and height, the GTK
+interface font (which Chrome's tabs use), the GTK text factor and Ghostty's font. Its script
+derives the scale from the panel's physical width, so a 2560x1440 iMac gets 1.0 and a
+3840x2160 one gets 1.25, and sets each size with its own control. `--check` audits and
+changes nothing. It runs over SSH as the logged-in desktop user, without Claude:
+
+    ssh imac01 python3 .claude/skills/omarchy-display-sizing/display_sizing.py --check
+
+Tests: `python3 -m unittest test_display_sizing`.
+
 ## Why the install needs no filter
 
 `--strip-components=2` drops the archive's top directory and `dot-claude/`. A top-level

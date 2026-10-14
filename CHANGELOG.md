@@ -5,6 +5,21 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.4.0 - 2026-10-15
+
+### Added
+- **`skills/omarchy-display-sizing/`, a skill and stdlib script that size an Omarchy
+  display.** It derives the monitor scale from the panel's physical width (130 points per
+  inch, which is 1.25 on a 27" iMac at 3840x2160). It then holds bar icons and height, the
+  GTK interface font, the GTK text factor and Ghostty's font to targets, each through its own
+  control, and verifies them live. The defaults are the owner's sizes in screen pixels:
+  25px bar icons, 16px Chrome tab text and 23.3px Ghostty text. It does not use
+  `omarchy display text size`, which moves the shell font, GTK and terminal together and
+  cannot reach those sizes. `--check` audits without changing anything, and a second apply
+  changes nothing. It finds the Hyprland session itself, so it runs over SSH.
+- **`test_display_sizing.py`** pins the defaults to those screen-pixel sizes, pins the scale
+  rounding the script restates from Omarchy, and runs the apply against a fake desktop.
+
 ## 0.3.0 - 2026-09-26
 
 ### Added
