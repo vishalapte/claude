@@ -5,6 +5,23 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.5.0 - 2026-10-16
+
+### Added
+- **`skills/enine-configure-domain-email-via-forwardemail/`, a skill and stdlib script that
+  add a domain to Forward Email and set its Porkbun DNS.** The records come from the
+  `zone_file` Forward Email's API returns for the domain, not from a list kept here. Other
+  apex MX records are replaced, Forward Email's include is merged into an existing SPF
+  record rather than adding a second one, DKIM and DMARC values are replaced, other apex TXT
+  records are kept, and a CNAME that would share a name with another type is reported, not
+  applied. Porkbun's parking placeholders are deleted; NS records never are. A plain run is
+  a dry run, and the skill asks the owner before it runs `--apply`, which writes, re-reads
+  the zone, runs Porkbun's preflight and asks Forward Email to verify. Keys are read from
+  `~/.config/forwardemail/credentials` and `~/.config/porkbun/credentials`, and a file
+  readable by others is refused.
+- **`test_configure_domain_email.py`** runs the script against in-memory Forward Email and
+  Porkbun fakes.
+
 ## 0.4.0 - 2026-10-15
 
 ### Added

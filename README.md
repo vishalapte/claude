@@ -84,6 +84,23 @@ changes nothing. It runs over SSH as the logged-in desktop user, without Claude:
 
 Tests: `python3 -m unittest test_display_sizing`.
 
+## Domain email and website at Porkbun
+
+Skills that set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
+run that prints the plan and writes nothing; `--apply` writes, re-reads the zone and runs
+Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
+`~/.config/forwardemail/credentials`, mode 600, never in this repo.
+
+- `dot-claude/skills/enine-configure-domain-email-via-forwardemail/` adds the domain to
+  Forward Email and holds the zone to the records in Forward Email's own `zone_file`: other
+  MX replaced, SPF merged, DKIM, DMARC, return path, verification and autodiscovery set,
+  then Forward Email verifies.
+
+It deletes Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and never
+touches NS records.
+
+Tests: `python3 -m unittest test_configure_domain_email`.
+
 ## Why the install needs no filter
 
 `--strip-components=2` drops the archive's top directory and `dot-claude/`. A top-level
