@@ -5,6 +5,16 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.6.0 - 2026-10-16
+
+### Added
+- **`skills/enine-configure-domain-eninesites/`** sets `ALIAS` records for a domain and its
+  `www` to `eninesites.com`, or to the host `--to` names, replacing the web record each
+  name holds. It always dry-runs first and asks the owner before `--apply` writes. It
+  reuses the email skill's Porkbun client.
+- **`test_configure_domain_eninesites.py`** runs the script against the Porkbun fake in
+  `test_configure_domain_email.py`.
+
 ## 0.5.0 - 2026-10-16
 
 ### Added

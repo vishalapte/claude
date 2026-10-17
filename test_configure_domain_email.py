@@ -6,6 +6,7 @@ reaches ~/.claude.
 Every test runs against in-memory Forward Email and Porkbun fakes (FakeApis replaces the
 script's one HTTP function) and never touches the network or the real credentials files.
 The zone file is written in the format of helpers/get-zone-file.js in forwardemail.net.
+test_configure_domain_eninesites imports FakeApis and load() from here.
 """
 
 import contextlib

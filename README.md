@@ -86,7 +86,7 @@ Tests: `python3 -m unittest test_display_sizing`.
 
 ## Domain email and website at Porkbun
 
-Skills that set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
+Two skills set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
 run that prints the plan and writes nothing; `--apply` writes, re-reads the zone and runs
 Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
 `~/.config/forwardemail/credentials`, mode 600, never in this repo.
@@ -95,11 +95,14 @@ Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
   Forward Email and holds the zone to the records in Forward Email's own `zone_file`: other
   MX replaced, SPF merged, DKIM, DMARC, return path, verification and autodiscovery set,
   then Forward Email verifies.
+- `dot-claude/skills/enine-configure-domain-eninesites/` sets `ALIAS` records for the domain
+  and `www` to `eninesites.com`, or to the host `--to` names. It imports the Porkbun client
+  from the email skill's script, so the two directories ship together.
 
-It deletes Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and never
-touches NS records.
+Both delete Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and
+never touch NS records.
 
-Tests: `python3 -m unittest test_configure_domain_email`.
+Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites`.
 
 ## Why the install needs no filter
 
