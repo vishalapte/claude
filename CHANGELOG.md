@@ -5,6 +5,23 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.7.0 - 2026-10-18
+
+### Added
+- **`CLAUDE.md` has a `## Threads` section.** One thread is current; each other thread has
+  its own file, `.rclocal/threads/<tag>.md`, so every file has one writer. `[new: tag]`,
+  `[tag]`, `now [tag]` and `done [tag]` open, file to, switch to and close a thread; parking
+  phrases ("table", "later", "for now") open one too. A question or idea that changes no
+  files gets a background agent that writes its answer into the thread's file and returns
+  one line. A question about something the agent showed gets a short answer and does not
+  change the current step; only an instruction does.
+- **`CLAUDE.md` has `## Replies` and `## Approval` sections.** Replies lead with the verdict,
+  show at most 5 items, keep my words, and explain any term that is not plain English.
+  Approval separates roger (acknowledgement: "copy", "ok") from wilco (execute: "go",
+  "engage"); a question asks to understand, and each reply opens with "Roger" or "Wilco".
+  Nothing merges into main without a wilco for it. "Sitrep?" reports the task in progress,
+  or else the tasks that remain in each thread.
+
 ## 0.6.0 - 2026-10-16
 
 ### Added
