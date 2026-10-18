@@ -58,6 +58,23 @@ in `settings.json`; other `gh` writes fall to the ask rules and the auto-mode cl
 
 Tests: `python3 -m unittest test_git_boundary`.
 
+## Commits and main
+
+The `commit-msg` hook refuses three things in a commit Claude Code makes, in any repo:
+
+- a merge commit. git runs the hook for the commit a merge makes, conflicted or not, and
+  for `--no-ff`; a squash merge passes.
+- a `Co-Authored-By: Claude` or `Claude-Session:` trailer. `attribution` in `settings.json`
+  stops Claude Code writing them, and its line in PR descriptions; the hook catches one written by hand.
+- a `Bump version to X.Y.Z.` line that is not the last line of the message.
+
+`git commit -n` skips the hook, so it is denied like `--no-verify`. `pull.ff=only` makes a
+pull that cannot fast-forward fail instead of merging; a pull that can fast-forward runs.
+Commands that move a branch (merge, reset, rebase, `pull --rebase`, cherry-pick, revert, am,
+update-ref, `branch -f`/`-M`, `checkout -B`, `switch -C`, a forced fetch) ask first. A
+plain fetch into a branch is fast-forward only, so it runs. `gh pr merge` is denied:
+it moves main on GitHub.
+
 ## Auto-approving compound commands
 
 Claude Code asks before running a compound command (`a && b`, `a | b`) even when each part

@@ -1,1 +1,25 @@
-_dispatch
+#!/usr/bin/env bash
+# Refuse a merge commit, a Claude trailer, and a version bump line that is not the last line,
+# then run the repo's own commit-msg. git runs this for every commit that writes a message:
+# -m, -F, --amend, an editor, and the commit a merge makes, conflicted or not. A squash merge
+# leaves no MERGE_HEAD, so it passes.
+dir="$(dirname "$0")"
+
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    echo "commit-msg: refusing a merge commit; history stays linear (git merge --abort, then rebase or squash)" >&2
+    exit 1
+fi
+
+# The message as git will store it: comments and trailing blank lines removed.
+msg="$(git stripspace --strip-comments <"$1")"
+if grep -qiE '^(Co-Authored-By:.*(Claude|anthropic\.com)|Claude-Session:)' <<<"$msg"; then
+    echo "commit-msg: refusing a Claude trailer (Co-Authored-By: Claude, Claude-Session:); the owner's rule overrides the harness" >&2
+    exit 1
+fi
+if grep -qE '^Bump version to ' <<<"$msg" \
+        && ! tail -n 1 <<<"$msg" | grep -qE '^Bump version to [0-9]+\.[0-9]+\.[0-9]+\.$'; then
+    echo "commit-msg: 'Bump version to X.Y.Z.' must be the last line of the message" >&2
+    exit 1
+fi
+
+HOOK_NAME=commit-msg exec "$dir/_dispatch" "$@"

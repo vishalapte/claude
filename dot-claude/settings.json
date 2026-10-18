@@ -43,7 +43,12 @@
       "Bash(*GIT_CONFIG_*)",
       "Bash(gh gist create*)",
       "Bash(gh repo create*--public*)",
-      "Bash(gh repo edit*--visibility*)"
+      "Bash(gh repo edit*--visibility*)",
+      "Bash(git commit -n*)",
+      "Bash(git commit * -n*)",
+      "Bash(git -C * commit -n*)",
+      "Bash(git -C * commit * -n*)",
+      "Bash(gh pr merge*)"
     ],
     "ask": [
       "Bash(git commit*)",
@@ -66,7 +71,53 @@
       "Bash(*manage.py makemessages*)",
       "Bash(*manage.py compilemessages*)",
       "Bash(*manage.py shell*)",
-      "Bash(*manage.py dbshell*)"
+      "Bash(*manage.py dbshell*)",
+      "Bash(git merge *)",
+      "Bash(git reset *)",
+      "Bash(git rebase *)",
+      "Bash(git pull *--rebase*)",
+      "Bash(git pull -r*)",
+      "Bash(git pull * -r*)",
+      "Bash(git cherry-pick *)",
+      "Bash(git revert *)",
+      "Bash(git am *)",
+      "Bash(git update-ref *)",
+      "Bash(git branch -f*)",
+      "Bash(git branch * -f*)",
+      "Bash(git branch --force*)",
+      "Bash(git branch * --force*)",
+      "Bash(git branch -M*)",
+      "Bash(git branch * -M*)",
+      "Bash(git checkout -B*)",
+      "Bash(git switch -C*)",
+      "Bash(git switch --force-create*)",
+      "Bash(git -C * merge *)",
+      "Bash(git -C * reset *)",
+      "Bash(git -C * rebase *)",
+      "Bash(git -C * pull *--rebase*)",
+      "Bash(git -C * pull -r*)",
+      "Bash(git -C * pull * -r*)",
+      "Bash(git -C * cherry-pick *)",
+      "Bash(git -C * revert *)",
+      "Bash(git -C * am *)",
+      "Bash(git -C * update-ref *)",
+      "Bash(git -C * branch -f*)",
+      "Bash(git -C * branch * -f*)",
+      "Bash(git -C * branch --force*)",
+      "Bash(git -C * branch * --force*)",
+      "Bash(git -C * branch -M*)",
+      "Bash(git -C * branch * -M*)",
+      "Bash(git -C * checkout -B*)",
+      "Bash(git -C * switch -C*)",
+      "Bash(git -C * switch --force-create*)",
+      "Bash(git fetch *+*)",
+      "Bash(git fetch *--force*)",
+      "Bash(git fetch -f*)",
+      "Bash(git fetch * -f*)",
+      "Bash(git -C * fetch *+*)",
+      "Bash(git -C * fetch *--force*)",
+      "Bash(git -C * fetch -f*)",
+      "Bash(git -C * fetch * -f*)"
     ]
   },
   "worktree": {
@@ -121,9 +172,11 @@
     }
   },
   "env": {
-    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_COUNT": "2",
     "GIT_CONFIG_KEY_0": "core.hooksPath",
-    "GIT_CONFIG_VALUE_0": "~/.claude/git-hooks"
+    "GIT_CONFIG_VALUE_0": "~/.claude/git-hooks",
+    "GIT_CONFIG_KEY_1": "pull.ff",
+    "GIT_CONFIG_VALUE_1": "only"
   },
   "hooks": {
     "PreToolUse": [
@@ -137,5 +190,10 @@
         ]
       }
     ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
   }
 }

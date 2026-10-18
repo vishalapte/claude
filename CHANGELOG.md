@@ -5,6 +5,12 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.8.0 - 2026-10-18
+
+### Added
+- **The `commit-msg` hook refuses merge commits, Claude trailers, and a bump line that is not last.** It runs for every commit Claude Code makes, in any repo.
+- **`settings.json` asks before a command moves a branch, and denies `gh pr merge` and `git commit -n`.** `attribution` stops the co-author and session trailers and the PR line, and `pull.ff=only` keeps pulls fast-forward.
+
 ## 0.7.0 - 2026-10-18
 
 ### Added

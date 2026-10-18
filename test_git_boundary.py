@@ -4,9 +4,10 @@ Lives at the repo root on purpose: the install extracts with --strip-components=
 top-level file never reaches ~/.claude, while a tests/ directory would.
 
 Each test gets a scratch HOME whose ~/.claude/git-hooks links to this checkout's hooks, and
-git is pointed at it exactly the way settings.json does, `~` included.
+git is pointed at it exactly the way settings.json does: its `env`, read from the file, `~` included.
 """
 
+import json
 import os
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ import unittest
 from pathlib import Path
 
 HOOKS = Path(__file__).resolve().parent / "dot-claude" / "git-hooks"
+SETTINGS = Path(__file__).resolve().parent / "dot-claude" / "settings.json"
 
 
 class GitBoundary(unittest.TestCase):
@@ -26,8 +28,7 @@ class GitBoundary(unittest.TestCase):
         self.env = {
             "HOME": str(self.tmp), "PATH": os.environ["PATH"],
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath",
-            "GIT_CONFIG_VALUE_0": "~/.claude/git-hooks",
+            **json.loads(SETTINGS.read_text())["env"],
             "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@t",
         }
@@ -141,6 +142,87 @@ class GitBoundary(unittest.TestCase):
 
     def test_repo_without_hooks_is_unaffected(self):
         self.git("commit", "-q", "--allow-empty", "-m", "w")
+
+
+    # --- commit-msg: no merge commits, no Claude trailers, the bump line last
+
+    def commit(self, message):
+        return self.git("commit", "-q", "--allow-empty", "-m", message, check=False)
+
+    def test_claude_trailer_refused(self):
+        for trailer in ("Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+                        "Co-authored-by: Claude <noreply@anthropic.com>",
+                        "Claude-Session: https://claude.ai/code/session_x"):
+            with self.subTest(trailer=trailer):
+                out = self.commit(f"feat: x\n\n{trailer}")
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn("Claude trailer", out.stderr)
+
+    def test_other_co_author_passes(self):
+        self.assertEqual(self.commit("feat: x\n\nCo-Authored-By: Ann <ann@example.com>").returncode, 0)
+
+    def test_bump_line_must_be_last(self):
+        out = self.commit("feat: x\n\nBump version to 1.2.0.\n\nRefs: #4")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("must be the last line", out.stderr)
+
+    def test_bump_line_last_passes(self):
+        for message in ("feat: x\n\nBump version to 1.2.0.", "feat: x\n\nBump version to 1.2.0.\n\n\n",
+                        "feat: x\n\nRefs: #4\n\nBump version to 1.2.0."):
+            with self.subTest(message=message):
+                self.assertEqual(self.commit(message).returncode, 0)
+
+    def branches(self):
+        """main and f, each one commit past their shared base, touching different files."""
+        self.git("checkout", "-q", "-b", "f")
+        (self.repo / "f").write_text("f")
+        self.git("add", "f")
+        self.git("commit", "-q", "-m", "f")
+        self.git("checkout", "-q", "-")
+        (self.repo / "m").write_text("m")
+        self.git("add", "m")
+        self.git("commit", "-q", "-m", "m")
+
+    def head(self):
+        return self.git("rev-parse", "HEAD").stdout
+
+    def test_merge_commit_refused(self):
+        self.branches()
+        before = self.head()
+        for argv in (["merge", "f", "-m", "merge"], ["merge", "--no-ff", "f", "-m", "merge"]):
+            with self.subTest(argv=argv):
+                out = self.git(*argv, check=False)
+                self.assertNotEqual(out.returncode, 0)
+                self.assertIn("refusing a merge commit", out.stderr)
+                self.assertEqual(self.head(), before)
+                self.git("merge", "--abort")
+
+    def test_squash_merge_passes(self):
+        self.branches()
+        self.git("merge", "-q", "--squash", "f")
+        self.assertEqual(self.commit("feat: f").returncode, 0)
+        self.assertTrue((self.repo / "f").exists())
+
+    def test_pull_that_cannot_fast_forward_fails(self):
+        upstream = self.tmp / "upstream"
+        self.git("clone", "-q", str(self.repo), str(upstream), cwd=self.tmp)
+        self.git("commit", "-q", "--allow-empty", "-m", "up", cwd=upstream)
+        before = self.head()
+        self.git("pull", "-q", str(upstream))  # fast-forward runs
+        self.assertNotEqual(self.head(), before)
+        self.git("commit", "-q", "--allow-empty", "-m", "local")
+        self.git("commit", "-q", "--allow-empty", "-m", "up2", cwd=upstream)
+        self.git("config", "pull.rebase", "false")  # a repo that would otherwise merge
+        before = self.head()
+        out = self.git("pull", "-q", str(upstream), check=False)
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("Not possible to fast-forward", out.stderr)
+        self.assertEqual(self.head(), before)
+
+    def test_repo_commit_msg_still_runs(self):
+        self.repo_hook("commit-msg", "repo-commit-msg-ran")
+        self.assertEqual(self.commit("feat: x").returncode, 0)
+        self.assertTrue((self.tmp / "repo-commit-msg-ran").exists())
 
 
 if __name__ == "__main__":
