@@ -5,6 +5,18 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.9.0 - 2026-10-21
+
+### Added
+- **`skills/linux-create-user/` (`/linux-create-user`) creates one user on a remote host over
+  SSH**, as the host's own history made them: a person (uid 1000 and above) with optional sudo
+  and GitHub keys, or a service account (uid below 1000) with an optional GitHub deploy key.
+  Without a uid it picks the next free one, and it prints every default it used. It dry-runs
+  by default; `--apply` writes and verifies. An existing account is never renumbered. A host
+  name ssh does not know is matched by its host key to a name `known_hosts` does know.
+- **`test_linux_create_user.py`** runs the script against a fake host and checks every script
+  it sends with `bash -n`.
+
 ## 0.8.0 - 2026-10-18
 
 ### Added

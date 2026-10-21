@@ -121,6 +121,19 @@ never touch NS records.
 
 Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites`.
 
+## Users on a hand-built host
+
+`dot-claude/skills/linux-create-user/` (`/linux-create-user`) creates one account on a remote
+host over `ssh <host> sudo -n bash -s`, the way a hand-built host's history made them. The
+uid decides the kind: 1000 and above is a person (bash, `/home/<name>`, optional sudo with a
+`NOPASSWD` drop-in, SSH keys from `github.com/<id>.keys`), below 1000 a service account
+(system, nologin, `/var/lib/<name>`, gid equal to uid, optional GitHub deploy key with a
+`Host <key>.github.com` alias). It reads the host, prints the plan, and writes only with
+`--apply`, then reads the host again to verify. It never renumbers an account and only adds.
+A host under racecar's Ansible rail gets its accounts from the `machine` role instead.
+
+Tests: `python3 -m unittest test_linux_create_user`.
+
 ## Why the install needs no filter
 
 `--strip-components=2` drops the archive's top directory and `dot-claude/`. A top-level
