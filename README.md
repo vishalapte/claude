@@ -113,13 +113,23 @@ Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
   MX replaced, SPF merged, DKIM, DMARC, return path, verification and autodiscovery set,
   then Forward Email verifies.
 - `dot-claude/skills/enine-configure-domain-eninesites/` sets `ALIAS` records for the domain
-  and `www` to `eninesites.com`, or to the host `--to` names. It imports the Porkbun client
-  from the email skill's script, so the two directories ship together.
+  and `www` to `eninesites.com`, or to the host `--to` names.
+
+Both import the Porkbun client from `dot-claude/skills/porkbun/porkbun_client.py`, its one
+home, so `./install` ships them with the `porkbun` directory.
 
 Both delete Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and
 never touch NS records.
 
-Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites`.
+`dot-claude/skills/porkbun/` (`/porkbun`) writes one record from a prompt:
+`porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same
+arguments, and `list` prints the records at a name and under it. It finds the domain the name
+belongs to with Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight
+steps, and owns the client the other two import. `porkbun-create`, `porkbun-update`, `porkbun-delete` and
+`porkbun-list` are the same skill with the verb fixed: each points at `porkbun/PROCEDURE.md`,
+the one procedure all five follow.
+
+Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites test_porkbun`.
 
 ## Users on a hand-built host
 

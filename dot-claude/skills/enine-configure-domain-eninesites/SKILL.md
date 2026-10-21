@@ -27,7 +27,7 @@ The default is a dry run: it reads the zone, prints the plan and writes nothing.
 - The Porkbun keys are in `~/.config/porkbun/credentials` (`PORKBUN_API_KEY`,
   `PORKBUN_SECRET_API_KEY`), mode 600. No Forward Email key is needed.
 - The key needs the `read` and `dns` permissions, and the domain needs API access turned on.
-- The script imports its Porkbun client from `../enine-configure-domain-email-via-forwardemail/fe_porkbun.py`.
+- The script imports its Porkbun client from `../porkbun/porkbun_client.py`.
   `./install` ships both directories, so they are installed together.
 
 ## How to run it

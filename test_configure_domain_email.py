@@ -4,7 +4,7 @@ Lives at the repo root for the reason test_git_boundary.py gives: a top-level fi
 reaches ~/.claude.
 
 Every test runs against in-memory Forward Email and Porkbun fakes (FakeApis replaces the
-script's one HTTP function) and never touches the network or the real credentials files.
+one HTTP function, in porkbun_client.py) and never touches the network or the real credentials files.
 The zone file is written in the format of helpers/get-zone-file.js in forwardemail.net.
 test_configure_domain_eninesites imports FakeApis and load() from here.
 """
@@ -34,6 +34,7 @@ def load(name, filename):
 
 
 fp = load("enine-configure-domain-email-via-forwardemail", "fe_porkbun.py")
+pc = sys.modules["porkbun_client"]  # the Porkbun client fe_porkbun imports: one http for both APIs
 D = "example.com"
 DKIM = "v=DKIM1; k=rsa; p=" + "A" * 392 + ";"
 
@@ -95,7 +96,7 @@ class FakeApis:
             return self.forward_email(method, url[len(fp.FE_API):], body)
         if not self.api_access:
             return 400, {"status": "ERROR", "code": "API_ACCESS_DISABLED", "message": "not opted in"}
-        parts = url[len(fp.PB_API):].strip("/").split("/")
+        parts = url[len(pc.PB_API):].strip("/").split("/")
         if method == "POST":
             assert body["apikey"] and body["secretapikey"]
         if parts[:2] == ["dns", "retrieve"]:
@@ -160,15 +161,15 @@ class Run(unittest.TestCase):
         }
         self.write_credentials("forwardemail", "FORWARDEMAIL_API_KEY=fe\n")
         self.write_credentials("porkbun", "PORKBUN_API_KEY=pk1_x\nPORKBUN_SECRET_API_KEY='sk1_x'\n")
-        self.saved = (fp.http, fp.CREDENTIALS, fp.PORKBUN_CREDENTIALS)
-        fp.PORKBUN_CREDENTIALS = self.files["porkbun"]
+        self.saved = (pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS)
+        pc.PORKBUN_CREDENTIALS = self.files["porkbun"]
         fp.CREDENTIALS = {
             self.files["forwardemail"]: ("FORWARDEMAIL_API_KEY",),
             self.files["porkbun"]: ("PORKBUN_API_KEY", "PORKBUN_SECRET_API_KEY"),
         }
 
     def tearDown(self):
-        fp.http, fp.CREDENTIALS, fp.PORKBUN_CREDENTIALS = self.saved
+        pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS = self.saved
 
     def write_credentials(self, service, text, mode=0o600):
         path = self.files[service]
@@ -176,10 +177,14 @@ class Run(unittest.TestCase):
         path.write_text(text)
         path.chmod(mode)
 
+    def argv(self, *argv):
+        """The command line run_script passes; a script whose first argument is not the domain overrides it."""
+        return [self.argv0, D, *argv]
+
     def run_script(self, apis, *argv):
-        fp.http = apis.http
+        pc.http = apis.http
         out, err = io.StringIO(), io.StringIO()
-        saved_argv, sys.argv = sys.argv, [self.argv0, D, *argv]
+        saved_argv, sys.argv = sys.argv, self.argv(*argv)
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 with self.assertRaises(SystemExit) as exit_:

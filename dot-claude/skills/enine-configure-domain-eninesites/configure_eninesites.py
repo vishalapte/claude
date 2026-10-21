@@ -14,9 +14,9 @@ import re
 import sys
 from pathlib import Path
 
-# The Porkbun client, credentials, plan rows and parking rule have one home: the email skill.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enine-configure-domain-email-via-forwardemail"))
-import fe_porkbun as fp  # noqa: E402
+# The Porkbun client, credentials, plan rows and normal form have one home: porkbun_client.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "porkbun"))
+import porkbun_client as pc  # noqa: E402
 
 DEFAULT_TARGET = "eninesites.com"
 NAMES = ("", "www")
@@ -33,27 +33,27 @@ def plan(current, domain, target):
     they are. A www holding another type is a CONFLICT: Porkbun serves a non-apex ALIAS as a
     CNAME, which cannot share a name (RFC 1034). The apex keeps its MX and TXT.
     """
-    parking = [r for r in current if r.type != "NS" and r.content.rstrip(".").lower() in fp.PORKBUN_PARKING]
+    parking = [r for r in current if r.type != "NS" and r.content.rstrip(".").lower() in pc.PORKBUN_PARKING]
     current = [r for r in current if r not in parking]
     steps = []
     for sub in NAMES:
-        want = fp.Record(sub, "ALIAS", target, 0, TTL)
+        want = pc.Record(sub, "ALIAS", target, 0, TTL)
         web = [r for r in current if r.sub == sub and r.type in WEB_TYPES]
         other = [r for r in current if r.sub == sub and r.type not in WEB_TYPES]
         if sub and other:
             types = ", ".join(sorted({r.type for r in other}))
-            steps.append(fp.Step("CONFLICT", want, note=f"{types} already at this name (RFC 1034)"))
+            steps.append(pc.Step("CONFLICT", want, note=f"{types} already at this name (RFC 1034)"))
             continue
         match = next((r for r in web if r.type == "ALIAS" and r.content == target), None)
         if match:
-            steps.append(fp.Step("ok", want, match.id))
+            steps.append(pc.Step("ok", want, match.id))
         elif web:
-            steps.append(fp.Step("EDIT", want, web[0].id, f"was {web[0].type} {web[0].content}"))
+            steps.append(pc.Step("EDIT", want, web[0].id, f"was {web[0].type} {web[0].content}"))
             match = web[0]
         else:
-            steps.append(fp.Step("CREATE", want))
-        steps.extend(fp.Step("DELETE", r, r.id, f"replaced by ALIAS {target}") for r in web if r is not match)
-    steps.extend(fp.Step("DELETE", r, r.id, "Porkbun parking placeholder") for r in parking)
+            steps.append(pc.Step("CREATE", want))
+        steps.extend(pc.Step("DELETE", r, r.id, f"replaced by ALIAS {target}") for r in web if r is not match)
+    steps.extend(pc.Step("DELETE", r, r.id, "Porkbun parking placeholder") for r in parking)
     return steps
 
 
@@ -74,16 +74,15 @@ def run(args):
     domain = args.domain.strip().rstrip(".").lower()
     target = args.to.strip().rstrip(".").lower()
     if not HOSTNAME.fullmatch(target):
-        raise fp.Refusal(f"--to must be a host name (an ALIAS cannot point at an address): {args.to}")
+        raise pc.Refusal(f"--to must be a host name (an ALIAS cannot point at an address): {args.to}")
     if target in (domain, f"www.{domain}"):
-        raise fp.Refusal(f"--to {target} would point {domain} at itself")
-    creds = fp.load_credentials({fp.PORKBUN_CREDENTIALS: fp.CREDENTIALS[fp.PORKBUN_CREDENTIALS]})
-    porkbun = fp.Porkbun(creds["PORKBUN_API_KEY"], creds["PORKBUN_SECRET_API_KEY"], domain)
+        raise pc.Refusal(f"--to {target} would point {domain} at itself")
+    porkbun = pc.Porkbun(*pc.porkbun_credentials(), domain)
 
     steps = plan(porkbun.records(), domain, target)
     changes = [s for s in steps if s.action in ("CREATE", "EDIT", "DELETE")]
     print(f"Porkbun web records for {domain} -> {target}: {len(changes)} changes")
-    fp.show(steps, domain)
+    pc.show(steps, domain)
 
     if changes and not args.apply:
         print("\nDry run: nothing written. Run again with --apply to make these changes.")
@@ -92,7 +91,7 @@ def run(args):
         steps = plan(porkbun.records(), domain, target)
         left = [s for s in steps if s.action != "ok"]
         print(f"\nAfter apply: {len(left)} rows not ok")
-        fp.show(left, domain)
+        pc.show(left, domain)
     drift = any(s.action != "ok" for s in steps)
 
     for warning in porkbun.warnings:
@@ -111,7 +110,7 @@ def main():
     args = parser.parse_args()
     try:
         sys.exit(run(args))
-    except fp.Refusal as err:
+    except pc.Refusal as err:
         print(f"refused: {err}", file=sys.stderr)
         sys.exit(2)
 

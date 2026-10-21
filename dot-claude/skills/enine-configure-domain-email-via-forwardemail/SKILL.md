@@ -38,6 +38,8 @@ script reads nothing else, and refuses a missing key or a file readable by group
     PORKBUN_SECRET_API_KEY=sk1_...
 
 - The Porkbun key needs the `read` and `dns` permissions.
+- The script imports its Porkbun client from `../porkbun/porkbun_client.py`.
+  `./install` ships both directories, so they are installed together.
 - The domain must have API access turned on at Porkbun (per domain, or for all domains).
 - Forward Email's API refuses an account on the free plan (HTTP 402).
 - The domain must use Porkbun's nameservers, or the records change nothing that resolves.

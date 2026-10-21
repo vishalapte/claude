@@ -5,6 +5,29 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.10.0 - 2026-10-21
+
+### Added
+- **`skills/porkbun/` (`/porkbun`) creates, updates or deletes one Porkbun DNS record, or
+  lists the records at a name.** `porkbun.py` finds the domain a name belongs to, dry-runs by
+  default, and with `--apply` writes, re-reads the zone and runs Porkbun's preflight; the
+  skill asks before it applies. A bare `/porkbun` shows the help and asks for the verb, the
+  name, the type and the target, before the credentials are read.
+- **`skills/porkbun-{create,update,delete,list}/`** are `/porkbun` with the verb fixed. Each
+  points at `skills/porkbun/PROCEDURE.md`, the one procedure all five skills follow.
+- **`test_porkbun.py`** runs the script against the Porkbun fake in
+  `test_configure_domain_email.py`, which gains an `argv()` hook for scripts whose first
+  argument is not the domain.
+
+### Fixed
+- **`ALIAS` and `NS` values are compared as host names**, lowercase and without the trailing
+  dot, as `CNAME`, `MX` and `SRV` already were (`porkbun_client.HOST_TYPES`).
+
+### Changed
+- **The Porkbun client moves to `skills/porkbun/porkbun_client.py`**, out of the email
+  skill's `fe_porkbun.py`, which keeps only Forward Email. The email and eninesites skills
+  import it from there.
+
 ## 0.9.0 - 2026-10-21
 
 ### Added
