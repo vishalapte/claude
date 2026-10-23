@@ -5,6 +5,13 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.9.1 - 2026-10-23
+
+### Fixed
+- **`create_user.py --service` picks the next uid after the host's own services.** A run of
+  held ids that reaches 999, the system accounts that `useradd -r` and `systemd-sysusers`
+  allocate downward from 999, is left out of the highest service uid.
+
 ## 0.9.0 - 2026-10-21
 
 ### Added

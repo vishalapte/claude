@@ -58,7 +58,7 @@ Defaults the script picks, and prints under "Defaults" in the dry run:
 | Setting | Default |
 |---|---|
 | login | without `login@`, what ssh uses for the host: your ssh config's `User`, else your local username |
-| uid | the account's own uid when the name exists; otherwise one past the highest uid in use in the kind's range (1000 and up, or 700 to 999 for a service), skipping a uid whose gid is taken |
+| uid | the account's own uid when the name exists; otherwise one past the highest uid in use in the kind's range (1000 and up, or 700 to 999 for a service), skipping a uid whose gid is taken; the system's own accounts, counting down from 999, are left out of "highest" |
 | kind | without `--uid`, a person, unless `--service` or `--deploy-key` |
 | sudo, ssh keys | a person gets neither without `--sudo` or `--github` |
 | deploy key | a service gets none without `--deploy-key` |
