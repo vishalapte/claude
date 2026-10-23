@@ -21,7 +21,8 @@ Defaults, printed with the plan under "Defaults" whenever one is used
   login            without login@: what ssh uses for the host, your ssh config's User or else
                    your local username; it needs passwordless sudo on the host
   uid              the account's own uid if <name> exists; else one past the highest uid in use
-                   in the kind's range (1000.., or 700..999 for a service), skipping any taken gid
+                   in the kind's range (1000.., or 700..999 for a service), skipping any taken gid;
+                   the system's own accounts, counting down from 999, are left out of "highest"
   kind             without --uid: a person, unless --service or --deploy-key
   sudo, ssh keys   a person gets neither unless --sudo or --github is given
   deploy key       a service gets none unless --deploy-key is given
@@ -223,11 +224,16 @@ def entry(lines, field, value):
 
 def next_uid(state, person):
     """(uid, why): one past the highest uid in the kind's range, skipping any uid or gid already
-    held. People start at PERSON_MIN, services at SERVICE_MIN (the host's history began at 700)."""
+    held. People start at PERSON_MIN, services at SERVICE_MIN (the host's history began at 700).
+    The system's own accounts (useradd -r, systemd-sysusers) take uids counting down from 999, so
+    a run of held ids that reaches the top of the range is theirs and is not the highest in use."""
     low, high = (PERSON_MIN, UID_MAX) if person else (SERVICE_MIN, PERSON_MIN - 1)
     taken = ({int(line.split(":")[2]) for line in state["passwd"]}
              | {int(line.split(":")[2]) for line in state["grp"]})
-    in_range = [int(line.split(":")[2]) for line in state["passwd"] if low <= int(line.split(":")[2]) <= high]
+    top = high
+    while top in taken:
+        top -= 1
+    in_range = [int(line.split(":")[2]) for line in state["passwd"] if low <= int(line.split(":")[2]) <= top]
     uid = max(in_range) + 1 if in_range else low
     while uid in taken:
         uid += 1
@@ -235,6 +241,8 @@ def next_uid(state, person):
         raise Refusal(f"no free uid left in {low}..{high}")
     why = (f"next free in {low}..{high}; highest in use {max(in_range)}" if in_range
            else f"first in {low}..{high}; none in use")
+    if top < high:
+        why += f"; {top + 1}..{high} are the system's"
     return uid, why
 
 

@@ -5,6 +5,14 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.10.1 - 2026-10-23
+
+### Fixed
+- **`create_user.py --service` picks the next uid after the host's own services**, not after
+  the system's accounts. Ubuntu's `useradd -r` and `systemd-sysusers` take uids counting down
+  from 999, so "one past the highest in 700..999" was 1000 and every `--service` was refused
+  with "no free uid left". A run of held ids reaching 999 is now left out of "highest".
+
 ## 0.10.0 - 2026-10-21
 
 ### Added

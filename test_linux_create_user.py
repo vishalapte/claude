@@ -267,6 +267,21 @@ class Defaults(Case):
         self.assertEqual(self.host.passwd["worker"][0], 701)
         self.assertNotIn("kind ", out)  # --deploy-key made it a service; nothing defaulted
 
+    def test_a_service_uid_skips_the_systems_accounts_counting_down_from_999(self):
+        # As Ubuntu leaves them: user and group ids interleave, and together they run to 999.
+        for name, uid in (("sshd", 997), ("messagebus", 998)):
+            self.host.passwd[name] = [uid, uid, "/nonexistent", "/usr/sbin/nologin"]
+            self.host.groups[name] = [uid, []]
+        self.host.groups["systemd-journal"] = [999, []]
+        code, out = self.run_script(HOST, "deploy", "--service", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.host.passwd["deploy"][0], 700)
+        self.assertIn("first in 700..999; none in use; 997..999 are the system's", out)
+        code, out = self.run_script(HOST, "worker", "--service", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.host.passwd["worker"][0], 701)
+        self.assertIn("next free in 700..999; highest in use 700; 997..999 are the system's", out)
+
     def test_an_existing_account_without_a_uid_keeps_its_own(self):
         self.run_script(HOST, "alice", "--uid", "1005", "--apply")
         code, out = self.run_script(HOST, "alice")
