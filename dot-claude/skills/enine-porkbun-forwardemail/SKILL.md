@@ -1,5 +1,5 @@
 ---
-name: enine-configure-domain-email-via-forwardemail
+name: enine-porkbun-forwardemail
 description: >
   Add a domain to Forward Email (forwardemail.net) and hold its DNS at Porkbun to exactly the
   records Forward Email asks for, in one deterministic run: creates the domain on Forward
@@ -15,8 +15,8 @@ description: >
 
 One script does the work. Run it; do not create records by hand in either dashboard.
 
-    python3 ~/.claude/skills/enine-configure-domain-email-via-forwardemail/fe_porkbun.py example.com           # dry run
-    python3 ~/.claude/skills/enine-configure-domain-email-via-forwardemail/fe_porkbun.py example.com --apply   # apply + verify
+    python3 ~/.claude/skills/enine-porkbun-forwardemail/fe_porkbun.py example.com           # dry run
+    python3 ~/.claude/skills/enine-porkbun-forwardemail/fe_porkbun.py example.com --apply   # apply + verify
 
 The default is a dry run: it reads both services, prints the plan and writes nothing. Only
 `--apply` creates the domain on Forward Email or changes a DNS record.
@@ -37,8 +37,10 @@ script reads nothing else, and refuses a missing key or a file readable by group
     PORKBUN_API_KEY=pk1_...
     PORKBUN_SECRET_API_KEY=sk1_...
 
+- IF the domain is in another Porkbun account, THEN pass `--account <name>`.
+  That reads `~/.config/porkbun/credentials.d/<name>`, the same two lines, mode 600.
 - The Porkbun key needs the `read` and `dns` permissions.
-- The script imports its Porkbun client from `../porkbun/porkbun_client.py`.
+- The script imports its Porkbun client from `../enine-porkbun/porkbun_client.py`.
   `./install` ships both directories, so they are installed together.
 - The domain must have API access turned on at Porkbun (per domain, or for all domains).
 - Forward Email's API refuses an account on the free plan (HTTP 402).

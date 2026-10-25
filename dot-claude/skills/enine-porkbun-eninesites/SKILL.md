@@ -1,5 +1,5 @@
 ---
-name: enine-configure-domain-eninesites
+name: enine-porkbun-eninesites
 description: >
   Point a Porkbun domain's website at eninesites: set ALIAS records for example.com and
   www.example.com to eninesites.com (or to another host with --to), replacing whatever web
@@ -14,9 +14,9 @@ description: >
 
 One script does the work. Run it; do not edit the records by hand in Porkbun's dashboard.
 
-    python3 ~/.claude/skills/enine-configure-domain-eninesites/configure_eninesites.py example.com            # dry run
-    python3 ~/.claude/skills/enine-configure-domain-eninesites/configure_eninesites.py example.com --apply    # apply + verify
-    python3 ~/.claude/skills/enine-configure-domain-eninesites/configure_eninesites.py example.com --to host.example.net --apply
+    python3 ~/.claude/skills/enine-porkbun-eninesites/configure_eninesites.py example.com            # dry run
+    python3 ~/.claude/skills/enine-porkbun-eninesites/configure_eninesites.py example.com --apply    # apply + verify
+    python3 ~/.claude/skills/enine-porkbun-eninesites/configure_eninesites.py example.com --to host.example.net --apply
 
 The default is a dry run: it reads the zone, prints the plan and writes nothing. Only
 `--apply` changes a record. `--to` names the host to point at; it defaults to
@@ -26,8 +26,10 @@ The default is a dry run: it reads the zone, prints the plan and writes nothing.
 
 - The Porkbun keys are in `~/.config/porkbun/credentials` (`PORKBUN_API_KEY`,
   `PORKBUN_SECRET_API_KEY`), mode 600. No Forward Email key is needed.
+- IF the domain is in another Porkbun account, THEN pass `--account <name>`.
+  That reads `~/.config/porkbun/credentials.d/<name>`, the same two lines.
 - The key needs the `read` and `dns` permissions, and the domain needs API access turned on.
-- The script imports its Porkbun client from `../porkbun/porkbun_client.py`.
+- The script imports its Porkbun client from `../enine-porkbun/porkbun_client.py`.
   `./install` ships both directories, so they are installed together.
 
 ## How to run it

@@ -6,6 +6,7 @@ list kept here, so a change on Forward Email's side reaches the zone without edi
 
     fe_porkbun.py example.com                  # dry run: plan, preflight, verify; writes nothing
     fe_porkbun.py example.com --apply          # create on Forward Email if absent, apply, verify
+    fe_porkbun.py example.com --account acme   # the Porkbun account in ~/.config/porkbun/credentials.d/acme
 
 Exit 0 conforms or was applied and verified, 1 something drifts or failed to verify,
 2 could not decide (credentials, plan, API access, an API error).
@@ -17,19 +18,19 @@ import sys
 from pathlib import Path
 
 # The Porkbun client, credentials, record form and plan rows have one home: the porkbun skill.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "porkbun"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enine-porkbun"))
 import porkbun_client as pc  # noqa: E402
 from porkbun_client import (  # noqa: E402
-    PORKBUN_CREDENTIALS, PORKBUN_KEYS, PORKBUN_PARKING, TXT_STRING, Porkbun, Record, Refusal, Step,
-    message_of, normalize, show, to_sub, unquote_txt,
+    PORKBUN_KEYS, TXT_STRING, Porkbun, Record, Refusal, Request,
+    message_of, normalize, to_sub, unquote_txt,
 )
 
 FE_API = "https://api.forwardemail.net/v1"
-# Each service's keys live in that service's own file, as KEY=VALUE lines, mode 600.
+# Each service's keys live in that service's own file, as KEY=VALUE lines, mode 600. The
+# Porkbun file is the one --account picks (porkbun_client.porkbun_file), added at run time.
 FORWARDEMAIL_CREDENTIALS = Path.home() / ".config" / "forwardemail" / "credentials"
 CREDENTIALS = {
     FORWARDEMAIL_CREDENTIALS: ("FORWARDEMAIL_API_KEY",),
-    PORKBUN_CREDENTIALS: PORKBUN_KEYS,
 }
 
 
@@ -115,88 +116,31 @@ def parse_zone(text, domain):
 
 # --- plan -----------------------------------------------------------------------------
 
-def key(record):
-    return (record.content, record.prio)
-
-
-def plan(desired, current):
-    """Steps that bring `current` to `desired`.
+def requests(desired, current):
+    """Requests that bring `current` to `desired`.
 
     Every (name, type) Forward Email names is held to exactly its records: other MX at the
-    apex are removed, a stale DKIM or DMARC value is replaced. The apex TXT set is the one
-    exception, because unrelated verifications live there: missing values are added, nothing
-    is removed, and the one SPF record gains Forward Email's include instead of a second SPF.
-    Porkbun's parking placeholders are deleted, and never count as a conflict.
+    apex are removed, a stale DKIM or DMARC value is updated in place. The apex TXT set is the
+    one exception, because unrelated verifications live there: missing values are added,
+    nothing is removed, and the one SPF record gains Forward Email's include instead of a
+    second SPF. Porkbun's parking placeholders are deleted. A CNAME that would share its name
+    with another type is a CONFLICT in the shared plan (RFC 1034).
     """
-    parking = [r for r in current if r.type != "NS" and r.content.rstrip(".").lower() in PORKBUN_PARKING]
-    current = [r for r in current if r not in parking]
-    steps = []
+    asks = pc.parking(current)
+    current = [r for r in current if all(r is not a.record for a in asks)]
     groups = {}
     for record in desired:
         groups.setdefault((record.sub, record.type), []).append(record)
     for (sub, rtype), want in groups.items():
         have = [r for r in current if r.sub == sub and r.type == rtype]
-        clash = [r for r in current if r.sub == sub and (r.type == "CNAME") != (rtype == "CNAME")]
-        if clash:
-            types = ", ".join(sorted({r.type for r in clash}))
-            for record in want:
-                steps.append(Step("CONFLICT", record, note=f"{types} already at this name (RFC 1034)"))
-        elif sub == "" and rtype == "TXT":
-            steps.extend(plan_apex_txt(want, have))
-        else:
-            steps.extend(plan_exclusive(want, have))
-    steps.extend(Step("DELETE", old, old.id, "Porkbun parking placeholder") for old in parking)
-    return steps
+        asks += apex_txt(want, have) if (sub, rtype) == ("", "TXT") else pc.exactly(want, have)
+    return asks
 
 
-def plan_exclusive(want, have):
-    steps, want, have = [], list(want), list(have)
-    for record in list(want):
-        match = next((h for h in have if key(h) == key(record)), None)
-        if match:
-            steps.append(Step("ok", record, match.id))
-            want.remove(record)
-            have.remove(match)
-    for record, old in zip(want, have):
-        steps.append(Step("EDIT", record, old.id, f"was {old.content}"))
-    steps.extend(Step("CREATE", record) for record in want[len(have):])
-    steps.extend(Step("DELETE", old, old.id) for old in have[len(want):])
-    return steps
-
-
-def plan_apex_txt(want, have):
-    steps = []
-    have_spf = [h for h in have if h.content.lower().startswith("v=spf1")]
-    for record in want:
-        if not record.content.lower().startswith("v=spf1"):
-            match = next((h for h in have if h.content == record.content), None)
-            steps.append(Step("ok", record, match.id) if match else Step("CREATE", record))
-        elif not have_spf:
-            steps.append(Step("CREATE", record))
-        elif len(have_spf) > 1:
-            steps.append(Step("CONFLICT", record, note=f"{len(have_spf)} SPF records at the apex (RFC 7208 allows one)"))
-        else:
-            old = have_spf[0]
-            terms = old.content.split()
-            missing = [t for t in record.content.split()[1:] if t.startswith("include:") and t not in terms]
-            if not missing:
-                steps.append(Step("ok", old, old.id, "merged SPF"))
-            else:
-                merged = " ".join([terms[0], *missing, *terms[1:]])
-                steps.append(Step("EDIT", old._replace(content=merged), old.id, f"was {old.content}"))
-    return steps
-
-
-def apply(porkbun, steps):
-    for step in steps:
-        if step.action == "EDIT":
-            porkbun.edit(step.id, step.record)
-    for step in steps:
-        if step.action == "CREATE":
-            porkbun.create(step.record)
-    for step in steps:
-        if step.action == "DELETE":
-            porkbun.delete(step.id)
+def apex_txt(want, have):
+    """Missing apex TXT values are added and none removed; SPF gains Forward Email's include."""
+    return [pc.spf_include(record, have) if record.content.lower().startswith("v=spf1")
+            else Request("create", record) for record in want]
 
 
 # --- main -----------------------------------------------------------------------------
@@ -204,10 +148,9 @@ def apply(porkbun, steps):
 
 def run(args):
     domain = args.domain.strip().rstrip(".").lower()
-    creds = pc.load_credentials(CREDENTIALS)
+    creds = pc.load_credentials({**CREDENTIALS, pc.porkbun_file(args.account): PORKBUN_KEYS})
     fe = ForwardEmail(creds["FORWARDEMAIL_API_KEY"])
     porkbun = Porkbun(creds["PORKBUN_API_KEY"], creds["PORKBUN_SECRET_API_KEY"], domain)
-    drift = False
 
     current = porkbun.records()  # read first: a Porkbun refusal must stop the run before any write
     info = fe.domain(domain)
@@ -223,28 +166,8 @@ def run(args):
         raise Refusal("Forward Email returned no zone_file; the API key's user must be an admin of the domain")
     desired = parse_zone(info["zone_file"], domain)
 
-    steps = plan(desired, current)
-    changes = [s for s in steps if s.action in ("CREATE", "EDIT", "DELETE")]
-    print(f"\nPorkbun DNS for {domain}: {len(desired)} records wanted, {len(changes)} changes")
-    show(steps, domain)
-
-    if changes and not args.apply:
-        print("\nDry run: nothing written. Run again with --apply to make these changes.")
-    if changes and args.apply:
-        apply(porkbun, changes)
-        steps = plan(desired, porkbun.records())
-        left = [s for s in steps if s.action != "ok"]
-        print(f"\nAfter apply: {len(left)} rows not ok")
-        show(left, domain)
-    if any(s.action != "ok" for s in steps):
-        drift = True
-
-    for warning in porkbun.warnings:
-        print(f"\nPorkbun warning: {warning}")
-    blockers, warnings = porkbun.preflight()
-    print(f"\nPorkbun preflight: blockers={blockers or 'none'} warnings={warnings or 'none'}")
-    if blockers:
-        drift = True
+    title = f"\nPorkbun DNS for {domain}: {len(desired)} records wanted"
+    drift = pc.converge(porkbun, title, lambda zone: requests(desired, zone), args.apply, current)
 
     verified, message = fe.verify(domain)
     print(f"\nForward Email verify-records: {'verified' if verified else 'NOT verified'}")
@@ -264,6 +187,8 @@ def main():
                         help="Forward Email plan for a new domain (default: the account's plan)")
     parser.add_argument("--catchall", help="new domain only: 'false', or comma-separated recipients "
                         "(Forward Email's default forwards everything to the account's email)")
+    parser.add_argument("--account", metavar="NAME",
+                        help="the Porkbun account in ~/.config/porkbun/credentials.d/NAME (default: the credentials file)")
     args = parser.parse_args()
     try:
         sys.exit(run(args))

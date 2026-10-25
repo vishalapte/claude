@@ -103,33 +103,42 @@ Tests: `python3 -m unittest test_display_sizing`.
 
 ## Domain email and website at Porkbun
 
-Two skills set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
+Three skills set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
 run that prints the plan and writes nothing; `--apply` writes, re-reads the zone and runs
 Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
-`~/.config/forwardemail/credentials`, mode 600, never in this repo.
+`~/.config/forwardemail/credentials`, mode 600, never in this repo. Another Porkbun account
+has its own file, `~/.config/porkbun/credentials.d/<name>`, which `--account <name>` picks.
 
-- `dot-claude/skills/enine-configure-domain-email-via-forwardemail/` adds the domain to
-  Forward Email and holds the zone to the records in Forward Email's own `zone_file`: other
-  MX replaced, SPF merged, DKIM, DMARC, return path, verification and autodiscovery set,
-  then Forward Email verifies.
-- `dot-claude/skills/enine-configure-domain-eninesites/` sets `ALIAS` records for the domain
-  and `www` to `eninesites.com`, or to the host `--to` names.
+- `dot-claude/skills/enine-porkbun-forwardemail/` adds the domain to Forward Email
+  and holds the zone to the records in Forward Email's own `zone_file`: other MX replaced,
+  SPF merged, DKIM, DMARC, return path, verification and autodiscovery set, then Forward
+  Email verifies.
+- `dot-claude/skills/enine-porkbun-fastmail/` sets Fastmail's three DKIM CNAMEs and adds its
+  include to SPF, so Fastmail sends as the domain; `--mx` also moves the apex MX to Fastmail.
+  Fastmail's API cannot add a domain, so the script prints the steps left at Fastmail.
+- `dot-claude/skills/enine-porkbun-eninesites/` sets `ALIAS` records for the domain and
+  `www` to `eninesites.com`, or to the host `--to` names.
 
-Both import the Porkbun client from `dot-claude/skills/porkbun/porkbun_client.py`, its one
-home, so `./install` ships them with the `porkbun` directory.
+All three import the Porkbun client from `dot-claude/skills/enine-porkbun/porkbun_client.py`, its
+one home, so `./install` ships them with the `enine-porkbun` directory.
 
-Both delete Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and
-never touch NS records.
+All three delete Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and
+never touch NS records. Each works out its records and writes them as create, update and
+delete requests through the client's one plan, which applies deletes first and writes
+nothing at a name that holds a `CONFLICT`.
 
-`dot-claude/skills/porkbun/` (`/porkbun`) writes one record from a prompt:
+`dot-claude/skills/enine-porkbun/` (`/enine-porkbun`) writes one record from a prompt:
 `porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same
-arguments, and `list` prints the records at a name and under it. It finds the domain the name
-belongs to with Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight
-steps, and owns the client the other two import. `porkbun-create`, `porkbun-update`, `porkbun-delete` and
-`porkbun-list` are the same skill with the verb fixed: each points at `porkbun/PROCEDURE.md`,
-the one procedure all five follow.
+arguments; `update --match v=spf1` edits only the record whose value starts with `v=spf1`. `list` prints the account's domains, one row per name with its TLDs, and `domain`
+prints the records at a name and under it. It finds the domain a name belongs to with
+Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight steps, and owns the
+client the other three import. `enine-porkbun-create`, `enine-porkbun-update`,
+`enine-porkbun-delete`, `enine-porkbun-list` and `enine-porkbun-domain` are the same skill
+with the verb fixed: each points at `enine-porkbun/PROCEDURE.md`, the one procedure all six
+follow.
 
-Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites test_porkbun`.
+Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites
+test_configure_domain_fastmail test_porkbun`.
 
 ## Users on a hand-built host
 

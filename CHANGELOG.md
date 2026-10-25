@@ -5,6 +5,47 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.11.0 - 2026-10-25
+
+### Added
+- **`skills/enine-porkbun-fastmail/` (`/enine-porkbun-fastmail`) sets a Porkbun domain's DNS
+  for Fastmail.** `fm_porkbun.py` holds `fm1`, `fm2` and `fm3._domainkey` to Fastmail's DKIM
+  CNAMEs and adds `include:spf.messagingengine.com` to the one SPF record, so Fastmail can
+  send as the domain while its mail keeps arriving where it does. `--mx` also edits the apex
+  MX into Fastmail's two in place. It ends by printing the steps at Fastmail its API cannot
+  do: add the domain, add the sending identities, and check a test message for `dkim=pass`.
+- **The Porkbun skills take `--account NAME`** to work in another Porkbun account, whose keys
+  are in `~/.config/porkbun/credentials.d/NAME`, the same two lines as
+  `~/.config/porkbun/credentials`, which stays the default. A name the account does not hold
+  is refused with the other accounts named, and the procedure asks the owner which to use.
+- **`/enine-porkbun-domain` prints a domain's records**, the job `/porkbun-list` did.
+- **`porkbun.py update --match PREFIX` edits only the record whose value starts with
+  PREFIX**, in any case. An apex TXT holds SPF beside site verifications, so `update TXT
+  example.com "v=spf1 ..." --match v=spf1` changes the SPF record and nothing else.
+- **`test_configure_domain_fastmail.py`** runs the Fastmail script against the Porkbun fake.
+
+### Changed
+- **The Porkbun skills are renamed to one prefix, `enine-porkbun`.** `/porkbun` is now
+  `/enine-porkbun`, and its verb skills `/enine-porkbun-create`, `-update`, `-delete`,
+  `-list` and `-domain`. `enine-configure-domain-email-via-forwardemail` is now
+  `enine-porkbun-forwardemail`, and `enine-configure-domain-eninesites` is now
+  `enine-porkbun-eninesites`. The scripts keep their names. `./install` does not remove the
+  old directories from `~/.claude/skills/`; delete them by hand.
+- **`list` prints the account's domains**, one row per name with its TLDs, where it printed a
+  domain's records.
+- **Every Porkbun skill writes through one plan in `porkbun_client.py`.** `porkbun.py`,
+  `configure_eninesites.py` and `fe_porkbun.py` each had their own plan and apply, in three
+  write orders. Each now works out its records and asks for create, update and delete;
+  deletes are applied first, so Porkbun never refuses a record that clashes with one about
+  to go, and an update edits its record in place. A name holding a `CONFLICT` gets no writes,
+  so a record is never deleted without the one meant to replace it.
+- **An `ALIAS` below the apex is held alone at its name, as a CNAME is**, because Porkbun
+  serves it as one (RFC 1034).
+- **`create` is `ok` when a record with the same value exists, whatever its TTL**, where a
+  different `--ttl` made a second record with the same value. A TTL is changed with `update`.
+- **`configure_eninesites.py` keeps a web record's TTL when it edits it into the `ALIAS`**,
+  where it set 600.
+
 ## 0.10.1 - 2026-10-23
 
 ### Fixed

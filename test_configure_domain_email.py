@@ -1,4 +1,4 @@
-"""Tests for dot-claude/skills/enine-configure-domain-email-via-forwardemail. Run: python3 -m unittest test_configure_domain_email
+"""Tests for dot-claude/skills/enine-porkbun-forwardemail. Run: python3 -m unittest test_configure_domain_email
 
 Lives at the repo root for the reason test_git_boundary.py gives: a top-level file never
 reaches ~/.claude.
@@ -33,7 +33,7 @@ def load(name, filename):
     return module
 
 
-fp = load("enine-configure-domain-email-via-forwardemail", "fe_porkbun.py")
+fp = load("enine-porkbun-forwardemail", "fe_porkbun.py")
 pc = sys.modules["porkbun_client"]  # the Porkbun client fe_porkbun imports: one http for both APIs
 D = "example.com"
 DKIM = "v=DKIM1; k=rsa; p=" + "A" * 392 + ";"
@@ -87,6 +87,7 @@ class FakeApis:
         self.fe_exists = fe_exists
         self.api_access = api_access
         self.writes = []
+        self.keys = set()  # every Porkbun API key a call carried
 
     def find(self, rtype, name=""):
         return sorted(r["content"] for r in self.records.values() if r["type"] == rtype and r["name"] == name)
@@ -97,6 +98,7 @@ class FakeApis:
         if not self.api_access:
             return 400, {"status": "ERROR", "code": "API_ACCESS_DISABLED", "message": "not opted in"}
         parts = url[len(pc.PB_API):].strip("/").split("/")
+        self.keys.add(headers["X-API-Key"])
         if method == "POST":
             assert body["apikey"] and body["secretapikey"]
         if parts[:2] == ["dns", "retrieve"]:
@@ -161,15 +163,18 @@ class Run(unittest.TestCase):
         }
         self.write_credentials("forwardemail", "FORWARDEMAIL_API_KEY=fe\n")
         self.write_credentials("porkbun", "PORKBUN_API_KEY=pk1_x\nPORKBUN_SECRET_API_KEY='sk1_x'\n")
-        self.saved = (pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS)
+        self.saved = (pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS, pc.PORKBUN_ACCOUNTS)
         pc.PORKBUN_CREDENTIALS = self.files["porkbun"]
-        fp.CREDENTIALS = {
-            self.files["forwardemail"]: ("FORWARDEMAIL_API_KEY",),
-            self.files["porkbun"]: ("PORKBUN_API_KEY", "PORKBUN_SECRET_API_KEY"),
-        }
+        pc.PORKBUN_ACCOUNTS = self.home / "porkbun" / "credentials.d"
+        fp.CREDENTIALS = {self.files["forwardemail"]: ("FORWARDEMAIL_API_KEY",)}
 
     def tearDown(self):
-        pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS = self.saved
+        pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS, pc.PORKBUN_ACCOUNTS = self.saved
+
+    def write_account(self, name, key, mode=0o600):
+        """credentials.d/<name>, another Porkbun account whose API key is `key`."""
+        self.files[name] = pc.PORKBUN_ACCOUNTS / name
+        self.write_credentials(name, f"PORKBUN_API_KEY={key}\nPORKBUN_SECRET_API_KEY=sk1_{name}\n", mode)
 
     def write_credentials(self, service, text, mode=0o600):
         path = self.files[service]
@@ -261,6 +266,18 @@ class Apply(Run):
         self.assertEqual(len(self.apis.writes), before)
 
 
+    def test_the_old_mx_are_updated_in_place_so_the_apex_always_has_mx(self):
+        mx = [w for w in self.apis.writes if w[0] != "fe-create" and "forwardemail" in w[-1] and "mx" in w[-1]]
+        self.assertEqual([w[0] for w in mx], ["edit", "edit"])
+        self.assertFalse([w for w in self.apis.writes if w[0] == "delete" and w[2].startswith("fwd")])
+
+    def test_a_duplicate_record_is_deleted_and_its_twin_stays(self):
+        dmarc = "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-abc@forwardemail.net;"
+        apis = FakeApis([{"name": "_dmarc", "type": "TXT", "content": dmarc}] * 2, fe_exists=True)
+        self.run_script(apis, "--apply")
+        self.assertEqual(apis.find("TXT", "_dmarc"), [dmarc])
+
+
 class Conflicts(Run):
     def test_a_cname_wanted_where_another_type_exists_is_not_applied(self):
         apis = FakeApis(porkbun_new_domain() + [{"name": "autoconfig", "type": "A", "content": "1.2.3.4"}],
@@ -299,6 +316,16 @@ class Refusals(Run):
         self.assertEqual(code, 2)
         self.assertIn("API_ACCESS_DISABLED", out)
         self.assertEqual(apis.writes, [])
+
+
+class Accounts(Run):
+    def test_account_reads_its_own_porkbun_file_and_not_the_default(self):
+        self.write_account("acme", "pk1_acme")
+        self.files["porkbun"].unlink()
+        apis = FakeApis(porkbun_new_domain(), fe_exists=True)
+        code, out = self.run_script(apis, "--account", "acme")
+        self.assertEqual(code, 1, out)  # a dry run with changes pending
+        self.assertEqual(apis.keys, {"pk1_acme"})
 
 
 if __name__ == "__main__":

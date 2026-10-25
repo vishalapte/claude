@@ -1,9 +1,10 @@
 # Porkbun DNS: the shared procedure
 
-`/porkbun` and the verb skills `/porkbun-create`, `/porkbun-update`, `/porkbun-delete` and
-`/porkbun-list` follow this file. The caller fixes the verb; everything else is here, once.
+`/enine-porkbun` and the verb skills `/enine-porkbun-create`, `/enine-porkbun-update`,
+`/enine-porkbun-delete`, `/enine-porkbun-list` and `/enine-porkbun-domain` follow this file.
+The caller fixes the verb; everything else is here, once.
 
-One script does the work: `python3 ~/.claude/skills/porkbun/porkbun.py`. Run it; do not edit
+One script does the work: `python3 ~/.claude/skills/enine-porkbun/porkbun.py`. Run it; do not edit
 records by hand in Porkbun's dashboard. With no arguments it prints its help, with examples.
 
 ## The parts of each verb
@@ -11,21 +12,25 @@ records by hand in Porkbun's dashboard. With no arguments it prints its help, wi
 | Verb | Parts, in the order they are asked | Command |
 |---|---|---|
 | `create` | name, type, target | `porkbun.py create <TYPE> <name> <target>` |
-| `update` | name, type, target | `porkbun.py update <TYPE> <name> <target>` |
+| `update` | name, type, target | `porkbun.py update <TYPE> <name> <target> [--match <prefix>]` |
 | `delete` | name, type, target or "all" | `porkbun.py delete <TYPE> <name> [target]` |
-| `list` | name, type or "all" | `porkbun.py list <name> [--type <TYPE>]` |
+| `list` | none | `porkbun.py list` |
+| `domain` | name, type or "all" | `porkbun.py domain <name> [--type <TYPE>]` |
 
 The name is the record's full name: the domain itself for the apex, `*.<domain>` for a
 wildcard. The script finds the domain it belongs to in the account. `--prio` sets an MX or SRV
 priority and `--ttl` the time to live; a create defaults to 0 and 600, an update keeps the
-record's own.
+record's own. Pass `--match` only when the prompt gives it, or when a dry run's `CONFLICT`
+names several records and the owner says which one: an apex TXT holds SPF beside site
+verifications, so `--match v=spf1` picks the SPF record.
 
 | Verb | Does |
 |---|---|
-| `create` | adds the record; `ok` when an identical one exists. Another record of the same type at the name stays (round-robin A is legitimate). |
-| `update` | edits the one record of that type at the name. None is `CONFLICT` (use create); several is `CONFLICT` (delete the extras first). |
+| `create` | adds the record; `ok` when one with the same value exists, whatever its TTL. Another record of the same type at the name stays (round-robin A is legitimate). |
+| `update` | edits the one record of that type at the name; with `--match <prefix>`, the one whose value starts with it, in any case. None is `CONFLICT` (use create); several is `CONFLICT` (delete the extras, or pass `--match`). |
 | `delete` | deletes every record of that type at the name, or only the one whose target the prompt gives; `ok` when none exists. |
-| `list` | prints the records at the name and every name under it; the domain itself lists the whole zone. Writes nothing. |
+| `list` | prints every domain in the account, one row per name with its TLDs. Writes nothing. |
+| `domain` | prints the records at the name and every name under it; the domain itself prints the whole zone. Writes nothing. |
 
 ## Collect the missing parts
 
@@ -35,12 +40,12 @@ record's own.
 4. Do not offer a name or a target the owner has not given in this session.
 5. Name: ask in a plain message for the record's full name, the domain itself for the apex. End the turn.
 6. Type for create, update or delete: ask with AskUserQuestion, options `A`, `AAAA`, `CNAME`, `TXT`.
-7. Type for list: ask with AskUserQuestion, options `All types`, `A`, `CNAME`, `TXT`.
+7. Type for domain: ask with AskUserQuestion, options `All types`, `A`, `CNAME`, `TXT`.
 8. In either type question, Other takes any type the help lists.
 9. Target for create or update: ask in a plain message what value the `<TYPE>` record at `<name>` should hold. End the turn.
 10. Target for delete: ask in a plain message for the value to delete, or "all" for every `<TYPE>` record at `<name>`. End the turn.
 11. IF the owner answers "all" or "All types", THEN leave the target, or `--type`, out of the command.
-12. With every part known, continue at "Write" or "List".
+12. With every part known, continue at "Write" or "Read".
 
 **Why:** the owner states each part; the skill does not propose one. A name or a value has no
 honest set of options, so it is asked as free text. The credentials matter only once there is
@@ -71,18 +76,32 @@ verified, 1 something drifts, conflicts or failed to verify (a dry run with chan
 exits 1), 2 could not decide. A preflight blocker exits 1 even when the record is right; it
 names a problem elsewhere in the zone, so report it.
 
-## List
+## Read: list, domain
 
-1. Run `porkbun.py list <name>`, with `--type <TYPE>` when the owner named a type.
-2. Show the owner every record it prints as a table. Ask nothing more: list writes nothing.
-3. IF the exit code is 2, THEN report the refusal message; do not work around it.
+1. For `list`, run `porkbun.py list`.
+2. For `domain`, run `porkbun.py domain <name>`, with `--type <TYPE>` when the owner named a type.
+3. Show the owner what it prints as a table. Ask nothing more: neither verb writes.
+4. IF the exit code is 2, THEN report the refusal message; do not work around it.
+
+## Account
+
+1. IF the prompt names a Porkbun account, THEN add `--account <name>` to every run of the script.
+2. IF a run refuses because the account does not hold the name, and it lists other accounts, THEN ask the owner.
+3. Ask with AskUserQuestion which account holds the name; give the accounts the refusal lists as options.
+4. Rerun the same command with `--account <the chosen name>`.
+
+**Why:** the owner picks the account; the script never tries one on its own. A refusal
+writes nothing, so asking after it costs nothing.
 
 ## Credentials
 
-The script reads them only when it plans or lists, after it has checked the arguments.
+The script reads them only when it plans or prints, after it has checked the arguments.
 
 - The Porkbun keys are in `~/.config/porkbun/credentials` (`PORKBUN_API_KEY`,
-  `PORKBUN_SECRET_API_KEY`), mode 600. The file holds one account.
+  `PORKBUN_SECRET_API_KEY`), mode 600. That file is the default account.
+- Each other account has its own file of the same two lines, mode 600:
+  `~/.config/porkbun/credentials.d/<name>`. `--account <name>` reads it instead.
 - The key needs the `read` and `dns` permissions, and the domain needs API access turned on.
 - The Porkbun client is `porkbun_client.py`, beside the script. The email and eninesites
-  skills import it from here too.
+  skills import it from here too, and write through its one plan: the same create, update
+  and delete, with deletes applied first and no write at a name that holds a `CONFLICT`.
