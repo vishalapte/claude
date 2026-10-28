@@ -48,7 +48,8 @@
       "Bash(git commit * -n*)",
       "Bash(git -C * commit -n*)",
       "Bash(git -C * commit * -n*)",
-      "Bash(gh pr merge*)"
+      "Bash(gh pr merge*)",
+      "ExitPlanMode"
     ],
     "ask": [
       "Bash(git commit*)",

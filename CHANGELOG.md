@@ -5,6 +5,12 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.10.0 - 2026-10-28
+
+### Changed
+- **`settings.json` denies `ExitPlanMode`.** Plan mode shows each plan as text and stops;
+  shift+tab leaves plan mode.
+
 ## 0.9.1 - 2026-10-23
 
 ### Fixed

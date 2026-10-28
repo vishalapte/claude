@@ -88,6 +88,14 @@ the hook does with that command. It also checks commands the hook must never app
 whatever the rules say, such as one containing `$(...)`, which runs a second command no rule
 was checked against.
 
+## Plan mode without the proceed prompt
+
+`ExitPlanMode` is denied in `settings.json`, so Claude Code removes the tool and Claude
+cannot ask "Claude has written up a plan and is ready to execute. Would you like to
+proceed?". A plan made over many prompts is shown as text each time; you leave plan mode
+with shift+tab when it is ready. A hook that refuses the call would show a "hook error"
+line each time instead; the deny rule shows nothing.
+
 ## Sizing an Omarchy display
 
 `dot-claude/skills/omarchy-display-sizing/` holds an Omarchy desktop's display sizes to one
