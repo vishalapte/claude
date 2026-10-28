@@ -5,6 +5,13 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.12.0 - 2026-10-28
+
+### Changed
+- **Plan mode no longer asks to proceed.** `settings.json` denies `ExitPlanMode`, which
+  removes the tool, so Claude shows each revised plan as text and stops instead of asking
+  "Would you like to proceed?" after every revision. Leave plan mode with shift+tab.
+
 ## 0.11.0 - 2026-10-25
 
 ### Added
