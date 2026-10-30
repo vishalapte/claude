@@ -17,6 +17,9 @@ records by hand in Porkbun's dashboard. With no arguments it prints its help, wi
 | `list` | none | `porkbun.py list` |
 | `domain` | name, type or "all" | `porkbun.py domain <name> [--type <TYPE>]` |
 | `capture` | name (the domain) | `porkbun.py capture <domain>` |
+| `history` | name (the domain) | `porkbun.py history <domain>` |
+| `restore` | name (the domain), restore point | `porkbun.py restore <domain> <point> [--prune]` |
+| `check` | name (the domain), intent | `porkbun.py check <domain> --intent <intent>` |
 
 The name is the record's full name: the domain itself for the apex, `*.<domain>` for a
 wildcard. The script finds the domain it belongs to in the account. `--prio` sets an MX or SRV
@@ -33,6 +36,9 @@ verifications, so `--match v=spf1` picks the SPF record.
 | `list` | prints every domain in the account, one row per name with its TLDs. Writes nothing. |
 | `domain` | prints the records at the name and every name under it; the domain itself prints the whole zone. Writes nothing. |
 | `capture` | asks the domain's live nameservers what they publish (Porkbun's scan, at most 20 an hour) and creates each record Porkbun's zone lacks; deletes Porkbun's parking placeholders. A second SPF record is `CONFLICT`. |
+| `history` | prints the zone's restore points, newest first; `(the live zone)` marks the one the zone matches. Writes nothing. |
+| `restore` | puts the zone back as it was at a restore point: adds back what is missing; `--prune` also deletes what was added since. Prints the command that undoes it. |
+| `check` | prints Porkbun's preflight for a change: `general`, `move-nameservers`, `transfer-out` or `enable-dnssec`. A blocker exits 1. Writes nothing. |
 
 ## Collect the missing parts
 
@@ -41,20 +47,24 @@ verifications, so `--match v=spf1` picks the SPF record.
 3. Do not mark any option "(Recommended)".
 4. Do not offer a name or a target the owner has not given in this session.
 5. Name: ask in a plain message for the record's full name, the domain itself for the apex. End the turn.
-   For `capture`, ask for the domain.
+   For `capture`, `history`, `restore` and `check`, ask for the domain.
 6. Type for create, update or delete: ask with AskUserQuestion, options `A`, `AAAA`, `CNAME`, `TXT`.
 7. Type for domain: ask with AskUserQuestion, options `All types`, `A`, `CNAME`, `TXT`.
 8. In either type question, Other takes any type the help lists.
 9. Target for create or update: ask in a plain message what value the `<TYPE>` record at `<name>` should hold. End the turn.
 10. Target for delete: ask in a plain message for the value to delete, or "all" for every `<TYPE>` record at `<name>`. End the turn.
 11. IF the owner answers "all" or "All types", THEN leave the target, or `--type`, out of the command.
-12. With every part known, continue at "Write" or "Read".
+12. Restore point for `restore`: ask in a plain message which point. End the turn.
+13. IF the owner does not know the point, THEN run `porkbun.py history <domain>`, which writes nothing, and show it.
+14. For `restore`, ask whether to delete what was added since the point; IF yes, THEN add `--prune`.
+15. Intent for `check`: ask with AskUserQuestion, options `general`, `move-nameservers`, `transfer-out`, `enable-dnssec`.
+16. With every part known, continue at "Write" or "Read".
 
 **Why:** the owner states each part; the skill does not propose one. A name or a value has no
 honest set of options, so it is asked as free text. The credentials matter only once there is
 a record to plan, so they come last.
 
-## Write: create, update, delete, capture
+## Write: create, update, delete, capture, restore
 
 1. Pass the target as one quoted argument; IF it starts with `-`, THEN put `--` before it.
 2. Always run the dry run first, without `--apply`, and read every row.
@@ -90,12 +100,14 @@ verified, 1 something drifts, conflicts, was refused or failed to verify (a dry 
 exits 1), 2 could not decide. A preflight blocker exits 1 even when the record is right; it
 names a problem elsewhere in the zone, so report it.
 
-## Read: list, domain
+## Read: list, domain, history, check
 
 1. For `list`, run `porkbun.py list`.
 2. For `domain`, run `porkbun.py domain <name>`, with `--type <TYPE>` when the owner named a type.
-3. Show the owner what it prints as a table. Ask nothing more: neither verb writes.
-4. IF the exit code is 2, THEN report the refusal message; do not work around it.
+3. For `history`, run `porkbun.py history <domain>`.
+4. For `check`, run `porkbun.py check <domain> --intent <intent>`; report every blocker and warning with its next step.
+5. Show the owner what it prints as a table. Ask nothing more: none of these verbs writes.
+6. IF the exit code is 2, THEN report the refusal message; do not work around it.
 
 ## Account
 

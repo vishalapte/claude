@@ -28,8 +28,38 @@ class Account(FakeApis):
         self.pages = []
         self.scanned = [dict(r) for r in scanned]
         self.scans = 0
+        self.points = []  # /dns/history's restorePoints
+        self.missing, self.extra = [], []  # /dns/diff against any point, fully qualified names
+        self.restores = []  # (snapshotId, prune, dryRun) per /dns/restore
+        self.intents = []
+        self.saved_as = None  # what a dry-run restore answers as previousStateSavedAs
 
     def http(self, method, url, headers, body=None):
+        if url == f"{pc.PB_API}/dns/history/{D}":
+            return 200, {"status": "SUCCESS", "domain": D, "restorePoints": self.points}
+        if url.startswith(f"{pc.PB_API}/dns/diff/{D}/"):
+            snapshot = {"id": int(url.rsplit("/", 1)[1]), "takenAt": "2026-10-30 10:00:00", "reason": "before-delete"}
+            return 200, {"status": "SUCCESS", "snapshot": snapshot, "missing": self.missing, "extra": self.extra}
+        if url == f"{pc.PB_API}/dns/restore/{D}":
+            self.restores.append((body["snapshotId"], body.get("prune", False), body.get("dryRun", False)))
+            removed = len(self.extra) if body.get("prune") else 0
+            if body.get("dryRun"):
+                return 200, {"status": "SUCCESS", "restored": len(self.missing), "removed": removed,
+                             "failed": [], "previousStateSavedAs": self.saved_as}
+            for r in self.missing:
+                sub = r["name"][: -len(D) - 1] if r["name"] != D else ""
+                self.records[str(self.next_id)] = {"name": sub, "type": r["type"], "content": r["content"], "prio": r.get("prio") or 0}
+                self.next_id += 1
+            self.writes.append(("restore", body["snapshotId"]))
+            return 200, {"status": "SUCCESS", "restoredFrom": body["snapshotId"], "previousStateSavedAs": 901,
+                         "restored": len(self.missing), "removed": removed, "failed": []}
+        if url.startswith(f"{pc.PB_API}/dns/preflight/{D}?intent="):
+            self.intents.append(url.split("=", 1)[1])
+            checks = [{"id": "nameservers-ours", "severity": "warning", "ok": True, "title": "Our nameservers answer"},
+                      {"id": "dnssec-active", "severity": "blocker", "ok": False, "title": "DNSSEC is on",
+                       "detail": "DS records are published", "next_action": "remove DNSSEC first"}]
+            return 200, {"status": "SUCCESS", "intent": self.intents[-1], "blockers": ["dnssec-active"],
+                         "warnings": [], "checks": checks}
         if url == f"{pc.PB_API}/dns/scan/{D}":
             self.scans += 1
             return 200, {"status": "SUCCESS", "domain": D, "recordCount": len(self.scanned), "records": self.scanned}
@@ -617,6 +647,78 @@ class Sandbox(Porkbun):
         self.write_credentials("porkbun", "PORKBUN_API_KEY=pk1_x\nPORKBUN_SECRET_API_KEY=sk1_x\n")
         code, out = self.run_script(Account([]), "list")
         self.assertNotIn("SANDBOX", out)
+
+
+class RestorePoints(Porkbun):
+    def setUp(self):
+        super().setUp()
+        self.apis = Account([{"name": "www", "type": "A", "content": "192.0.2.7"}])
+        self.apis.points = [{"id": 1240, "takenAt": "2026-10-30 11:00:00", "reason": "before-create", "source": "auto",
+                             "recordCount": 2, "matchesLive": True},
+                            {"id": 1234, "takenAt": "2026-10-30 10:00:00", "reason": "before-delete", "source": "auto",
+                             "recordCount": 1, "matchesLive": False}]
+        self.apis.missing = [{"name": D, "type": "MX", "content": "mx.example.net", "ttl": 600, "prio": 10}]
+        self.apis.extra = [{"name": f"www.{D}", "type": "A", "content": "192.0.2.7", "ttl": 600, "prio": None}]
+
+    def test_history_lists_the_points_newest_first_and_writes_nothing(self):
+        code, out = self.run_script(self.apis, "history", D)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"restore points for {D}, newest first: 2", out)
+        self.assertLess(out.index("1240"), out.index("1234"))
+        self.assertIn("(the live zone)", out)
+        self.assertEqual(self.apis.writes, [])
+
+    def test_a_restore_dry_run_shows_the_diff_and_porkbuns_dry_run_and_writes_nothing(self):
+        code, out = self.run_script(self.apis, "restore", D, "1234")
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"ADD      MX    {D}", out)
+        self.assertIn("[added since; --prune deletes it]", out)
+        self.assertIn("Porkbun dry run: adds 1, deletes 0", out)
+        self.assertIn("Dry run: nothing written", out)
+        self.assertEqual(self.apis.restores, [(1234, False, True)])
+        self.assertEqual(self.apis.writes, [])
+
+    def test_prune_deletes_what_was_added_since(self):
+        code, out = self.run_script(self.apis, "restore", D, "1234", "--prune")
+        self.assertIn(f"DELETE   A     www.{D}", out)
+        self.assertIn("deletes 1", out)
+
+    def test_apply_restores_and_names_the_point_that_undoes_it(self):
+        code, out = self.run_script(self.apis, "restore", D, "1234", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.apis.restores, [(1234, False, False)])
+        self.assertEqual(self.apis.at("", "MX"), ["mx.example.net"])
+        self.assertIn(f"To undo this restore: porkbun.py restore {D} 901 --prune --apply", out)
+
+    def test_a_dry_run_that_saved_the_zone_is_refused(self):
+        self.apis.saved_as = 1250
+        code, out = self.run_script(self.apis, "restore", D, "1234")
+        self.assertEqual(code, 2)
+        self.assertIn("may have restored", out)
+
+
+class Check(Porkbun):
+    def test_check_runs_the_preflight_for_the_intent_and_writes_nothing(self):
+        apis = Account([])
+        code, out = self.run_script(apis, "check", D, "--intent", "move-nameservers")
+        self.assertEqual(code, 1, out)  # a blocker
+        self.assertEqual(apis.intents, ["move-nameservers"])
+        self.assertIn("blockers=dnssec-active", out)
+        self.assertIn("BLOCKER  dnssec-active", out)
+        self.assertIn("remove DNSSEC first", out)
+        self.assertIn("ok       nameservers-ours", out)
+        self.assertEqual(apis.writes, [])
+
+    def test_the_intent_defaults_to_general(self):
+        apis = Account([])
+        self.run_script(apis, "check", D)
+        self.assertEqual(apis.intents, ["general"])
+
+    def test_an_unknown_intent_is_refused_before_any_call(self):
+        apis = Account([])
+        code, out = self.run_script(apis, "check", D, "--intent", "move")
+        self.assertEqual(code, 2)
+        self.assertEqual(apis.lookups, [])
 
 
 class Help(Porkbun):

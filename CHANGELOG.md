@@ -5,6 +5,17 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.15.0 - 2026-10-30
+
+### Added
+- **`porkbun.py history`, `restore` and `check`: undo, and a preflight by intent.** Porkbun
+  saves the zone before the first write each hour; `history` lists those restore points and
+  `restore <domain> <point>` puts one back (`--prune` also deletes what was added since),
+  showing Porkbun's diff and its own dry run first and printing the command that undoes the
+  restore. `check <domain> --intent move-nameservers` (or `transfer-out`, `enable-dnssec`)
+  prints what that change would break, such as DNSSEC taking the domain dark. Neither
+  `history` nor `check` writes.
+
 ## 0.14.0 - 2026-10-30
 
 ### Added

@@ -146,7 +146,9 @@ the run prints `SANDBOX:` and refuses any answer not marked sandbox.
 arguments; `update --match v=spf1` edits only the record whose value starts with `v=spf1`. `list` prints the account's domains, one row per name with its TLDs, and `domain`
 prints the records at a name and under it. `capture` copies the records a domain publishes
 at another DNS host into Porkbun's zone, from Porkbun's scan of its live nameservers, so
-moving the nameservers to Porkbun loses nothing. It finds the domain a name belongs to with
+moving the nameservers to Porkbun loses nothing. `history` lists the zone's restore points and
+`restore` puts one back, the undo for any of these skills; `check` runs Porkbun's preflight for
+a change made elsewhere, such as moving the nameservers or turning on DNSSEC. It finds the domain a name belongs to with
 Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight steps, and owns the
 client the other three import. `enine-porkbun-create`, `enine-porkbun-update`,
 `enine-porkbun-delete`, `enine-porkbun-list` and `enine-porkbun-domain` are the same skill

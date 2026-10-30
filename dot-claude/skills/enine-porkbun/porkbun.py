@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Create, update or delete one DNS record at Porkbun, list the account's domains, show a
-domain's records, or capture the records a domain publishes elsewhere into Porkbun's zone.
+domain's records, capture the records a domain publishes elsewhere into Porkbun's zone, list
+or restore Porkbun's restore points, or run Porkbun's preflight for a change.
 
 Usage
   porkbun.py <verb> <TYPE> <name> [target] [--prio N] [--ttl N] [--match P] [--apply] [--account NAME]
   porkbun.py list [--account NAME]
   porkbun.py domain <name> [--type TYPE] [--account NAME]
   porkbun.py capture <domain> [--apply] [--account NAME]
+  porkbun.py history <domain> [--account NAME]
+  porkbun.py restore <domain> <point> [--prune] [--apply] [--account NAME]
+  porkbun.py check <domain> [--intent INTENT] [--account NAME]
 
 Examples (each is a dry run that writes nothing; add --apply to write)
   porkbun.py create A     example.com      192.168.0.1        A record at the apex
@@ -24,6 +28,9 @@ Examples (each is a dry run that writes nothing; add --apply to write)
   porkbun.py domain www.example.com --type A                  the A records at www and under it
   porkbun.py list --account acme                              every domain in the account acme
   porkbun.py capture example.com                              copy what example.com publishes today
+  porkbun.py history example.com                              the zone's restore points, newest first
+  porkbun.py restore example.com 1234 --prune                 put the zone back as it was at point 1234
+  porkbun.py check example.com --intent move-nameservers      what moving the nameservers would break
 
 Verbs
   create   add the record; does nothing when an identical record exists
@@ -36,6 +43,12 @@ Verbs
            20 an hour) and create in Porkbun's zone each record it lacks, deleting Porkbun's
            parking placeholders; run it before the nameservers move to Porkbun. A scan cannot
            list a zone, so a name nobody guesses is missed
+  history  print the zone's restore points, newest first; Porkbun takes one before the first
+           write each hour, before an import and before a restore; writes nothing
+  restore  put the zone back as it was at <point>: add back what is missing; with --prune also
+           delete what was added since. A dry run shows Porkbun's diff and Porkbun's own dry run
+  check    print Porkbun's preflight for --intent ({intents}; default general):
+           what it would break, what it would warn about, and every check that ran; writes nothing
 
 Arguments
   <TYPE>     {types}
@@ -60,7 +73,8 @@ Rows printed
 
 Exit
   0  done, already as asked, or printed
-  1  changes pending (dry run), a conflict, a refused write, or the check after --apply failed
+  1  changes pending (dry run), a conflict, a refused write, the check after --apply failed,
+     a record a restore could not put back, or a preflight blocker
   2  refused: a bad argument, the credentials, Porkbun's API, or a scan that found nothing
 
 Credentials: ~/.config/porkbun/credentials (PORKBUN_API_KEY, PORKBUN_SECRET_API_KEY), mode 600,
@@ -84,6 +98,8 @@ VERBS = ("create", "update", "delete")
 TYPES = ("A", "AAAA", "MX", "CNAME", "ALIAS", "TXT", "NS", "SRV", "TLSA", "CAA", "SSHFP", "HTTPS", "SVCB", "DS")
 ADDRESS = {"A": ipaddress.IPv4Address, "AAAA": ipaddress.IPv6Address}
 LIST_PAGE = 1000  # /domain/listAll returns up to this many domains per call
+# What /dns/preflight checks for: the change about to be made (Porkbun's OpenAPI spec).
+INTENTS = ("general", "move-nameservers", "transfer-out", "enable-dnssec")
 
 
 def zone_of(account, name, label=None):
@@ -179,6 +195,85 @@ def capture(name, write, account=None):
     return 1 if pc.converge(porkbun, title, lambda zone: captured(found, zone), write) else 0
 
 
+def history_row(record):
+    """One record from /dns/diff, whose names are fully qualified."""
+    prio = f" prio={record.get('prio')}" if record.get("type") in ("MX", "SRV") else ""
+    return f"{record.get('type', '?'):<5} {record.get('name', '?'):<38} {record.get('content', '')}{prio}"
+
+
+def history(name, account=None):
+    porkbun, domain = connect(name, account)
+    pc.banner(porkbun)
+    points = porkbun.call("GET", f"/dns/history/{domain}").get("restorePoints") or []
+    print(f"Porkbun restore points for {domain}, newest first: {len(points)}")
+    for point in points:
+        live = "  (the live zone)" if point.get("matchesLive") else ""
+        print(f"  {point.get('id', '?'):>8}  {point.get('takenAt', '?')}  {point.get('reason', '?'):<20} "
+              f"{point.get('source', '?'):<6} {point.get('recordCount', '?')} records{live}")
+    return 0
+
+
+def restore(name, point, prune, write, account=None):
+    """Show what restoring `point` adds and deletes, from /dns/diff and Porkbun's dry run; with
+    `write`, restore it. Porkbun saves the zone first, and names that save to undo it."""
+    porkbun, domain = connect(name, account)
+    pc.banner(porkbun)
+    diff = porkbun.call("GET", f"/dns/diff/{domain}/{point}")
+    missing, extra = diff.get("missing") or [], diff.get("extra") or []
+    taken = diff.get("snapshot") or {}
+    print(f"Porkbun restore {domain} to point {point} ({taken.get('takenAt', '?')}, {taken.get('reason', '?')}): "
+          f"{len(missing) + (len(extra) if prune else 0)} changes")
+    for record in missing:
+        print(f"  ADD      {history_row(record)}")
+    for record in extra:
+        print(f"  {'DELETE' if prune else 'stays':<8} {history_row(record)}{'' if prune else '  [added since; --prune deletes it]'}")
+    request = {"snapshotId": point, "prune": prune}
+    changes = bool(missing or (prune and extra))
+    if not write:
+        verdict = porkbun.call("POST", f"/dns/restore/{domain}", {**request, "dryRun": True})
+        if verdict.get("previousStateSavedAs") is not None:
+            raise pc.Refusal(f"Porkbun's dry-run restore saved the zone as point {verdict['previousStateSavedAs']}, "
+                             f"so it may have restored; check porkbun.py history {domain}")
+        print(f"\nPorkbun dry run: adds {verdict.get('restored', 0)}, deletes {verdict.get('removed', 0)}")
+        failed = report_failed(verdict)
+        if changes:
+            print("\nDry run: nothing written. Run again with --apply to restore.")
+        return 1 if changes or failed else 0
+    done = porkbun.call("POST", f"/dns/restore/{domain}", request)
+    print(f"\nRestored: added {done.get('restored', 0)}, deleted {done.get('removed', 0)}")
+    failed = report_failed(done)
+    for warning in porkbun.warnings:
+        print(f"\nPorkbun warning: {warning}")
+    if done.get("previousStateSavedAs") is not None:
+        print(f"\nTo undo this restore: porkbun.py restore {domain} {done['previousStateSavedAs']} --prune --apply")
+    return 1 if failed else 0
+
+
+def report_failed(body):
+    """Print the records Porkbun could not put back (parking and other masked types); True when any."""
+    failed = body.get("failed") or []
+    for item in failed:
+        print(f"  FAILED   {item.get('type', '?'):<5} {item.get('name', '?'):<38} [{item.get('reason', '')}]")
+    return bool(failed)
+
+
+def check(name, intent, account=None):
+    porkbun, domain = connect(name, account)
+    pc.banner(porkbun)
+    body = porkbun.call("GET", f"/dns/preflight/{domain}?intent={intent}")
+    blockers, warnings = body.get("blockers") or [], body.get("warnings") or []
+    print(f"Porkbun preflight for {domain}, intent {intent}: "
+          f"blockers={', '.join(blockers) or 'none'} warnings={', '.join(warnings) or 'none'}")
+    for item in body.get("checks") or []:
+        state = "ok" if item.get("ok") else str(item.get("severity", "?")).upper()
+        print(f"  {state:<8} {item.get('id', '?'):<24} {item.get('title', '')}")
+        if not item.get("ok"):
+            for line in (item.get("detail"), item.get("next_action")):
+                if line:
+                    print(f"           {line}")
+    return 1 if blockers else 0
+
+
 def run(args):
     if args.verb == "list":
         return list_domains(args.account)
@@ -187,6 +282,12 @@ def run(args):
         return list_records(name, args.type, args.account)
     if args.verb == "capture":
         return capture(name, args.apply, args.account)
+    if args.verb == "history":
+        return history(name, args.account)
+    if args.verb == "restore":
+        return restore(name, args.point, args.prune, args.apply, args.account)
+    if args.verb == "check":
+        return check(name, args.intent, args.account)
     content = " ".join(args.content).strip()
     if args.verb != "delete" and not content:
         raise pc.Refusal(f"{args.verb} needs the record's content")
@@ -204,7 +305,7 @@ def run(args):
 
 def help_text():
     """The usage, verbs and types: what a bare call prints, without reading the credentials."""
-    return __doc__.strip().replace("{types}", " ".join(TYPES))
+    return __doc__.strip().replace("{types}", " ".join(TYPES)).replace("{intents}", ", ".join(INTENTS))
 
 
 def main():
@@ -236,6 +337,16 @@ def main():
     capture_parser.add_argument("name", metavar="domain", help="the domain")
     capture_parser.add_argument("--apply", action="store_true",
                                 help="change DNS (without it, a dry run that writes nothing)")
+    verbs.add_parser("history", help="print the zone's restore points").add_argument("name", metavar="domain")
+    restore_parser = verbs.add_parser("restore", help="put the zone back as it was at a restore point")
+    restore_parser.add_argument("name", metavar="domain")
+    restore_parser.add_argument("point", type=int, help="the restore point's id, from history")
+    restore_parser.add_argument("--prune", action="store_true", help="also delete the records added since the point")
+    restore_parser.add_argument("--apply", action="store_true",
+                                help="change DNS (without it, a dry run that writes nothing)")
+    check_parser = verbs.add_parser("check", help="print Porkbun's preflight for a change")
+    check_parser.add_argument("name", metavar="domain")
+    check_parser.add_argument("--intent", choices=INTENTS, default="general", help="the change about to be made")
     # Before the verb or after it: a verb's own --account leaves the top-level one alone when absent.
     for verb_parser in verbs.choices.values():
         verb_parser.add_argument("--account", metavar="NAME", default=argparse.SUPPRESS, help=account_help)
