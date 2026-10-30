@@ -76,10 +76,12 @@ the old value an edit or delete removes) before anything is written.
 For `capture`, tell the owner before you ask in step 7: run it while the domain's current DNS
 host still answers, before the nameservers move to Porkbun; and a scan cannot list a zone, so
 compare the rows with the list at the current host and add any name it missed with `create`.
+IF a row is `FAILED` after `--apply`, THEN show the owner its reason and stop; Porkbun names
+the fix in it. The other names were written.
 
 Rows: `ok` matches, `CREATE` adds, `EDIT` changes the record in place (the note shows the old
-value), `DELETE` removes, `CONFLICT` cannot be applied. Exit 0 conforms or was applied and
-verified, 1 something drifts, conflicts or failed to verify (a dry run with changes pending
+value), `DELETE` removes, `CONFLICT` cannot be applied, `FAILED` was refused by Porkbun or skipped after a refusal at its name. Exit 0 conforms or was applied and
+verified, 1 something drifts, conflicts, was refused or failed to verify (a dry run with changes pending
 exits 1), 2 could not decide. A preflight blocker exits 1 even when the record is right; it
 names a problem elsewhere in the zone, so report it.
 

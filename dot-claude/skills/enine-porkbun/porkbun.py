@@ -55,10 +55,12 @@ Rows printed
   DELETE    removes it
   CONFLICT  cannot be applied (a CNAME sharing a name, an update with none or several, a
             second SPF record)
+  FAILED    refused by Porkbun (the note names its code, hint and request id), or skipped
+            because an earlier write at its name was refused; other names are still written
 
 Exit
   0  done, already as asked, or printed
-  1  changes pending (dry run), a conflict, or the check after --apply failed
+  1  changes pending (dry run), a conflict, a refused write, or the check after --apply failed
   2  refused: a bad argument, the credentials, Porkbun's API, or a scan that found nothing
 
 Credentials: ~/.config/porkbun/credentials (PORKBUN_API_KEY, PORKBUN_SECRET_API_KEY), mode 600,

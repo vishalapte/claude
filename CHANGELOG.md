@@ -5,6 +5,20 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.13.1 - 2026-10-30
+
+### Changed
+- **A Porkbun write that Porkbun refuses no longer leaves a zone half-changed.** The client
+  used to write every delete, then every edit, then every create, and stop at the first
+  refusal, so a refused create could leave a name with its old record deleted and nothing in
+  its place, or two MX sets. It now writes name by name; a refusal stops only that name, is
+  printed as `FAILED` with Porkbun's code, hint, the records in the way, its suggested record
+  and request id, and the run exits 1 after re-reading the zone.
+- **Porkbun writes can be resent safely.** Each write carries a fresh `Idempotency-Key`, so
+  one whose answer was lost, or that met a rate limit, a server error or a write still in
+  flight, is resent up to three times (after `Retry-After`, or 2, 5 and 10 seconds) and
+  Porkbun replays its first answer instead of writing twice.
+
 ## 0.13.0 - 2026-10-30
 
 ### Added

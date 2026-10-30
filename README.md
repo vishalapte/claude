@@ -132,8 +132,11 @@ one home, so `./install` ships them with the `enine-porkbun` directory.
 
 All three delete Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and
 never touch NS records. Each works out its records and writes them as create, update and
-delete requests through the client's one plan, which applies deletes first and writes
-nothing at a name that holds a `CONFLICT`.
+delete requests through the client's one plan, which writes name by name, deletes first,
+and writes nothing at a name that holds a `CONFLICT`. A write Porkbun refuses stops only its
+own name; it is printed as `FAILED` with Porkbun's code, hint and request id, and the run
+exits 1. Every write carries an `Idempotency-Key`, so one that times out, hits the rate limit
+or a server error is resent up to three times without being written twice.
 
 `dot-claude/skills/enine-porkbun/` (`/enine-porkbun`) writes one record from a prompt:
 `porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same

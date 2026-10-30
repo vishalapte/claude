@@ -8,8 +8,10 @@ Exit-code convention for the scripts that use it: Refusal means 2, could not dec
 import json
 import re
 import stat
+import time
 import urllib.error
 import urllib.request
+import uuid
 from collections import namedtuple
 from pathlib import Path
 
@@ -43,9 +45,21 @@ Request = namedtuple("Request", "verb record old match note", defaults=(None, No
 
 TTL = 600  # Porkbun's usual minimum: a create's ttl when the request gives none
 
+# The POSTs that change a zone. Each carries a fresh Idempotency-Key, reused only by its own
+# resends, so a resend after a timeout gets Porkbun's first answer instead of writing twice.
+# The read-only POSTs (/domain/listAll) get no key and are not resent.
+WRITES = ("/dns/create/", "/dns/edit/", "/dns/delete/", "/dns/restore/", "/dns/import/")
+WAITS = (2, 5, 10)  # seconds before each resend of a write, when Porkbun names no Retry-After
+MAX_WAIT = 60  # the longest Retry-After a write waits out
+sleep = time.sleep  # the tests replace it
+
 
 class Refusal(Exception):
     """The run cannot decide; exit 2 with this message."""
+
+
+class Unreachable(Refusal):
+    """No answer came back (a timeout or a network error), so a write may be resent."""
 
 
 # --- credentials ----------------------------------------------------------------------
@@ -101,23 +115,71 @@ def porkbun_credentials(account=None):
 
 
 def http(method, url, headers, body=None):
-    """Return (status, parsed body). The body is JSON when it parses, else text."""
+    """Return (status, parsed body). The body is JSON when it parses, else text. A Retry-After
+    header is copied into a JSON object body as `_retry_after`, a key no Porkbun answer uses."""
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     if data is not None:
         request.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
-            status, raw = response.status, response.read()
+            status, raw, retry_after = response.status, response.read(), response.headers.get("Retry-After")
     except urllib.error.HTTPError as err:
-        status, raw = err.code, err.read()
-    except urllib.error.URLError as err:
-        raise Refusal(f"{method} {url}: {err.reason}") from err
+        status, raw, retry_after = err.code, err.read(), err.headers.get("Retry-After")
+    except OSError as err:  # URLError, and a timeout while reading
+        raise Unreachable(f"{method} {url}: {getattr(err, 'reason', err)}") from err
     text = raw.decode(errors="replace")
     try:
-        return status, json.loads(text)
+        parsed = json.loads(text)
     except ValueError:
         return status, text
+    if isinstance(parsed, dict) and retry_after:
+        parsed["_retry_after"] = retry_after
+    return status, parsed
+
+
+def transient(status, parsed):
+    """True when sending the same request again can succeed: Porkbun's rate limit, a server
+    error, the same write still in flight, or an error Porkbun marks retryable."""
+    if status == 429 or status >= 500:
+        return True
+    if not isinstance(parsed, dict):
+        return False
+    action = parsed.get("next_action") if isinstance(parsed.get("next_action"), dict) else {}
+    return parsed.get("code") == "IDEMPOTENCY_KEY_IN_USE" or action.get("retryable") is True
+
+
+def retry_after(parsed, wait):
+    """Porkbun's Retry-After in seconds, at most MAX_WAIT; `wait` when it names none."""
+    try:
+        return min(int(parsed["_retry_after"]), MAX_WAIT)
+    except (KeyError, TypeError, ValueError):
+        return wait
+
+
+def refused(path, status, parsed, domain):
+    """Porkbun's account of a refusal: the code and message, its hint, the records in the way,
+    the record it suggests instead, and the request id a support ticket names."""
+    if not isinstance(parsed, dict):
+        return f"Porkbun {path} -> {status}: {message_of(parsed)}"
+    code = parsed.get("code", "")
+    text = f"Porkbun {path} -> {status} {code}: {message_of(parsed)}"
+    if code == "API_ACCESS_DISABLED":
+        text += f" (turn on API access for {domain} at porkbun.com > Domain Management)"
+    action = parsed.get("next_action")
+    if isinstance(action, dict) and action.get("hint"):
+        text += f"; hint: {action['hint']}"
+    blocking = parsed.get("conflictingRecords") or []
+    if blocking:
+        text += "; in the way: " + ", ".join(
+            f"{r.get('type', '?')} {r.get('name', '?')} {r.get('content', '')}".strip() if isinstance(r, dict) else str(r)
+            for r in blocking)
+    merge = parsed.get("suggestedMerge")
+    if merge:
+        text += f"; suggested: {merge.get('content', merge) if isinstance(merge, dict) else merge}"
+    if parsed.get("requestId"):
+        text += f" (request {parsed['requestId']})"
+    return text
 
 
 def message_of(body):
@@ -139,14 +201,24 @@ class Porkbun:
         self.warnings = []
 
     def call(self, method, path, body=None):
+        """Porkbun's answer to one request. A write is resent, with the same Idempotency-Key, when
+        no answer came back or Porkbun says to try again, at most len(WAITS) times."""
         payload = None if method == "GET" else {**self.auth, **(body or {})}
-        status, parsed = http(method, PB_API + path, self.headers, payload)
+        write = method == "POST" and path.startswith(WRITES)
+        headers = {**self.headers, "Idempotency-Key": str(uuid.uuid4())} if write else self.headers
+        for wait in (*WAITS, None):
+            try:
+                status, parsed = http(method, PB_API + path, headers, payload)
+            except Unreachable:
+                if not write or wait is None:
+                    raise
+                sleep(wait)
+                continue
+            if not write or wait is None or not transient(status, parsed):
+                break
+            sleep(retry_after(parsed, wait))
         if not isinstance(parsed, dict) or parsed.get("status") != "SUCCESS":
-            code = parsed.get("code", "") if isinstance(parsed, dict) else ""
-            hint = ""
-            if code == "API_ACCESS_DISABLED":
-                hint = f" (turn on API access for {self.domain} at porkbun.com > Domain Management)"
-            raise Refusal(f"Porkbun {path} -> {status} {code}: {message_of(parsed)}{hint}")
+            raise Refusal(refused(path, status, parsed, self.domain))
         for warning in parsed.get("warnings") or []:
             text = message_of(warning)
             if text not in self.warnings:
@@ -360,20 +432,35 @@ def plan(requests, current):
 
 
 def apply(porkbun, steps):
-    """Deletes first: Porkbun refuses a record that clashes with one still present."""
-    for action, write in (("DELETE", lambda s: porkbun.delete(s.id)),
-                          ("EDIT", lambda s: porkbun.edit(s.id, s.record)),
-                          ("CREATE", lambda s: porkbun.create(s.record))):
-        for step in steps:
-            if step.action == action:
-                write(step)
+    """Write the steps name by name, each name's deletes first, then its edits, then its creates:
+    Porkbun refuses a record that clashes with one still present (RFC 1034).
+
+    A refused write is not raised. It and the rest of its name's writes come back as FAILED
+    steps, so no name holds both its old and its new records; the other names go on.
+    """
+    writes = {"DELETE": lambda s: porkbun.delete(s.id),
+              "EDIT": lambda s: porkbun.edit(s.id, s.record),
+              "CREATE": lambda s: porkbun.create(s.record)}
+    failed = []
+    for name in dict.fromkeys(s.record.sub for s in steps):
+        ordered = [s for action in writes for s in steps if s.action == action and s.record.sub == name]
+        for i, step in enumerate(ordered):
+            try:
+                writes[step.action](step)
+            except Refusal as err:
+                failed.append(step._replace(action="FAILED", note=f"{step.action} refused: {err}"))
+                failed += [s._replace(action="FAILED", note=f"{s.action} skipped: a write at this name was refused")
+                           for s in ordered[i + 1:]]
+                break
+    return failed
 
 
 def converge(porkbun, title, requests_of, write, current=None):
     """Plan `requests_of(zone)`, print it, and with `write` apply it, re-read and re-plan.
 
     Then print Porkbun's warnings and preflight. True when a row is not ok after the run (a dry
-    run with changes pending, a conflict, a failed check) or preflight names a blocker.
+    run with changes pending, a conflict, a failed check), a write was refused, or preflight
+    names a blocker.
     """
     current = porkbun.records() if current is None else current
     steps = plan(requests_of(current), current)
@@ -383,8 +470,12 @@ def converge(porkbun, title, requests_of, write, current=None):
 
     if changes and not write:
         print("\nDry run: nothing written. Run again with --apply to make these changes.")
+    failed = []
     if changes and write:
-        apply(porkbun, changes)
+        failed = apply(porkbun, changes)
+        if failed:
+            print(f"\nRefused: {len(failed)} writes, each name's writes stopping at its first refusal")
+            show(failed, porkbun.domain)
         current = porkbun.records()
         steps = plan(requests_of(current), current)
         left = [s for s in steps if s.action != "ok"]
@@ -396,7 +487,7 @@ def converge(porkbun, title, requests_of, write, current=None):
         print(f"\nPorkbun warning: {warning}")
     blockers, warnings = porkbun.preflight()
     print(f"\nPorkbun preflight: blockers={blockers or 'none'} warnings={warnings or 'none'}")
-    return drift or bool(blockers)
+    return drift or bool(failed) or bool(blockers)
 
 
 def show(steps, domain):

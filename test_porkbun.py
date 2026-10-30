@@ -5,7 +5,9 @@ reaches ~/.claude. Uses the Porkbun fake from test_configure_domain_email, plus 
 domain list, and never touches the network or the real credentials files.
 """
 
+import io
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 from test_configure_domain_email import D, FakeApis, Run, load, pc, porkbun_new_domain
@@ -395,6 +397,142 @@ class Capture(Porkbun):
         self.assertEqual(code, 2)
         self.assertIn("found no records", out)
         self.assertEqual(apis.writes, [])
+
+
+LOST = "lost"  # an answer: Porkbun wrote, but the answer never came back
+
+
+class Flaky(Account):
+    """Account whose writes can be refused or go unanswered, and which replays an answer for a
+    repeated Idempotency-Key as Porkbun does. `answers` maps (verb, content) to the answers a
+    write gets, in order, before the fake's own; LOST writes and then raises Unreachable."""
+
+    def __init__(self, records, answers=(), **kwargs):
+        super().__init__(records, **kwargs)
+        self.answers = {k: list(v) for k, v in dict(answers).items()}
+        self.sent = []  # (method, path, Idempotency-Key or None), every request
+        self.replies = {}
+
+    def http(self, method, url, headers, body=None):
+        path = url[len(pc.PB_API):]
+        key = headers.get("Idempotency-Key")
+        self.sent.append((method, path, key))
+        if key in self.replies:
+            return self.replies[key]
+        parts = path.strip("/").split("/")
+        if method == "POST" and parts[0] == "dns" and parts[1] in ("create", "edit", "delete"):
+            content = body["content"] if parts[1] != "delete" else self.records.get(parts[3], {}).get("content")
+            queue = self.answers.get((parts[1], content))
+            if queue:
+                answer = queue.pop(0)
+                if answer == LOST:
+                    self.replies[key] = super().http(method, url, headers, body)
+                    raise pc.Unreachable("timed out")
+                return answer
+        reply = super().http(method, url, headers, body)
+        if key:
+            self.replies[key] = reply
+        return reply
+
+    def idempotency_keys(self, verb):
+        return [k for m, path, k in self.sent if path.startswith(f"/dns/{verb}/")]
+
+
+def error(status, code, message="refused", **fields):
+    return status, {"status": "ERROR", "code": code, "message": message, **fields}
+
+
+class Resends(Porkbun):
+    def setUp(self):
+        super().setUp()
+        self.waits = []
+        self.saved_sleep, pc.sleep = pc.sleep, self.waits.append
+
+    def tearDown(self):
+        pc.sleep = self.saved_sleep
+        super().tearDown()
+
+    def test_a_write_whose_answer_is_lost_is_resent_with_its_key_and_lands_once(self):
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [LOST]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(apis.at("auth", "A"), ["192.0.2.1"])
+        keys = apis.idempotency_keys("create")
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(keys[0], keys[1])
+        self.assertEqual(self.waits, [2])
+
+    def test_each_write_gets_its_own_key_and_a_read_gets_none(self):
+        apis = Flaky([{"name": "auth", "type": "A", "content": "192.0.2.9"}])
+        code, out = self.run_script(apis, "update", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(set(apis.idempotency_keys("edit"))), 1)
+        self.assertTrue(all(k is None for m, path, k in apis.sent if not path.startswith("/dns/edit/")))
+
+    def test_a_rate_limit_waits_its_retry_after_and_resends(self):
+        limited = error(429, "RATE_LIMITED", _retry_after="7")
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [limited]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.waits, [7])
+
+    def test_a_write_still_in_flight_or_marked_retryable_is_resent(self):
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [
+            error(409, "IDEMPOTENCY_KEY_IN_USE"), error(400, "DNS_READ_FAILED", next_action={"retryable": True})]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.waits, [2, 5])
+
+    def test_a_write_is_given_up_after_three_resends(self):
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [error(503, "UNAVAILABLE")] * 4})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.waits, [2, 5, 10])
+        self.assertIn("FAILED   A     auth.", out)
+        self.assertEqual(apis.at("auth", "A"), [])
+
+    def test_a_refusal_that_will_not_change_is_not_resent(self):
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [error(400, "INVALID_TYPE")]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.waits, [])
+        self.assertEqual(len(apis.idempotency_keys("create")), 1)
+
+
+class RefusedWrites(Porkbun):
+    def test_a_refusal_names_the_code_hint_records_in_the_way_and_request_id(self):
+        conflict = error(400, "RECORD_CONFLICT", "a CNAME is exclusive", next_action={"hint": "delete the CNAME first"},
+                         conflictingRecords=[{"id": "7", "name": f"auth.{D}", "type": "CNAME", "content": "x.example.net"}],
+                         requestId="req-1")
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [conflict]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 1, out)
+        for part in ("RECORD_CONFLICT", "hint: delete the CNAME first", f"in the way: CNAME auth.{D} x.example.net",
+                     "(request req-1)"):
+            self.assertIn(part, out)
+
+    def test_a_suggested_merge_is_named(self):
+        spf = error(400, "SPF_CONFLICT", suggestedMerge={"content": "v=spf1 include:a include:b -all"})
+        apis = Flaky(porkbun_new_domain(), answers={("create", "v=spf1 include:b -all"): [spf]})
+        code, out = self.run_script(apis, "create", "TXT", D, "v=spf1 include:b -all", "--apply")
+        self.assertIn("suggested: v=spf1 include:a include:b -all", out)
+
+    def test_a_refused_delete_holds_its_name_and_the_other_names_are_written(self):
+        old = {"name": "", "type": "MX", "content": "mx.old.example.net", "prio": 10}
+        apis = Flaky([old], answers={("delete", "mx.old.example.net"): [error(400, "RECORD_LOCKED")]})
+        pc.http = apis.http
+        porkbun = pc.Porkbun("pk1_x", "sk1_x", D)
+        new_mx = pc.Record("", "MX", "mx.new.example.net", 10, None)
+        www = pc.Record("www", "A", "192.0.2.5", 0, None)
+        requests = lambda zone: [*(pc.Request("delete", r, old=r) for r in zone if r.type == "MX"),
+                                 pc.Request("create", new_mx), pc.Request("create", www)]
+        with redirect_stdout(io.StringIO()) as out:
+            drift = pc.converge(porkbun, "test", requests, True)
+        self.assertTrue(drift)
+        self.assertEqual(apis.at("", "MX"), ["mx.old.example.net"])  # the new MX is not added beside it
+        self.assertEqual(apis.at("www", "A"), ["192.0.2.5"])
+        self.assertIn("CREATE skipped: a write at this name was refused", out.getvalue())
+        self.assertIn("DELETE refused: Porkbun", out.getvalue())
 
 
 class Help(Porkbun):

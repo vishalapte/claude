@@ -50,8 +50,8 @@ owner has not seen. Each name holds one web record, so "set" means replace. A se
 CNAME left beside the ALIAS splits visitors between two sites.
 
 Rows: `ok` matches, `CREATE` adds, `EDIT` changes a record in place (the note shows the old
-type and value), `DELETE` removes, `CONFLICT` cannot be applied. Exit 0 conforms or was
-applied and verified, 1 something drifts or failed to verify (a dry run with changes pending
+type and value), `DELETE` removes, `CONFLICT` cannot be applied, `FAILED` was refused by Porkbun or skipped after a refusal at its name. Exit 0 conforms or was
+applied and verified, 1 something drifts, was refused or failed to verify (a dry run with changes pending
 exits 1), 2 could not decide.
 
 ## What it changes, and what it leaves alone

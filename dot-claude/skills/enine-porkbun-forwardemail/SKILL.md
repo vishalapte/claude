@@ -69,8 +69,8 @@ statement of what the domain needs, so the plan is a diff against it rather than
 here. A record added by hand drifts from it silently.
 
 Rows: `ok` matches, `CREATE` adds, `EDIT` changes a record in place (the note shows the old
-value), `DELETE` removes, `CONFLICT` cannot be applied. Exit 0 conforms or was applied and
-verified, 1 something drifts or failed to verify (a dry run with changes pending exits 1),
+value), `DELETE` removes, `CONFLICT` cannot be applied, `FAILED` was refused by Porkbun or skipped after a refusal at its name. Exit 0 conforms or was applied and
+verified, 1 something drifts, was refused or failed to verify (a dry run with changes pending exits 1),
 2 could not decide.
 
 ## What it changes, and what it leaves alone
