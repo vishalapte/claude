@@ -156,7 +156,10 @@ with the verb fixed: each points at `enine-porkbun/PROCEDURE.md`, the one proced
 follow.
 
 Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites
-test_configure_domain_fastmail test_porkbun`.
+test_configure_domain_fastmail test_porkbun`. `test_porkbun_sandbox` runs `porkbun.py` itself
+against Porkbun's sandbox, which changes nothing real, when
+`~/.config/porkbun/credentials.d/sandbox` holds a sandbox key pair (`pk1_sb_`) and the sandbox
+account holds a domain; otherwise it skips.
 
 ## Users on a hand-built host
 

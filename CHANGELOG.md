@@ -5,6 +5,13 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+### Added
+- **`test_porkbun_sandbox.py` runs `porkbun.py` against Porkbun's sandbox.** The other tests
+  use a fake, which cannot show that Porkbun accepts what the scripts send. With a sandbox key
+  in `~/.config/porkbun/credentials.d/sandbox` it lists, creates, updates and deletes a TXT
+  record, reads the history and runs a preflight on the sandbox account's first domain;
+  without one it skips.
+
 ## 0.15.0 - 2026-10-30
 
 ### Added
