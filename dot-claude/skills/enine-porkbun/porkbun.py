@@ -50,7 +50,7 @@ Arguments
 
 Rows printed
   ok        already as asked
-  CREATE    adds the record
+  CREATE    adds the record; a dry run notes Porkbun's own check of it, which writes nothing
   EDIT      changes it in place; the note shows the old value
   DELETE    removes it
   CONFLICT  cannot be applied (a CNAME sharing a name, an update with none or several, a
@@ -64,7 +64,8 @@ Exit
   2  refused: a bad argument, the credentials, Porkbun's API, or a scan that found nothing
 
 Credentials: ~/.config/porkbun/credentials (PORKBUN_API_KEY, PORKBUN_SECRET_API_KEY), mode 600,
-holds the default account. Each other account has its own file of the same two lines,
+holds the default account. A sandbox key (pk1_sb_) works on Porkbun's test system: the run
+prints SANDBOX and refuses any answer not marked sandbox. Each other account has its own file of the same two lines,
 ~/.config/porkbun/credentials.d/<NAME>, used only with --account NAME. They are read only
 after the arguments check out. The zone is the longest suffix of <name> the account holds.
 """
@@ -113,6 +114,7 @@ def under(record, sub):
 def list_records(name, rtype, account=None):
     porkbun, domain = connect(name, account)
     sub = pc.to_sub(name, domain)
+    pc.banner(porkbun)
     rows = sorted((r for r in porkbun.records() if under(r, sub) and rtype in (None, r.type)),
                   key=lambda r: (r.sub, r.type, r.content))
     kind = f"{rtype} records" if rtype else "records"
@@ -127,6 +129,7 @@ def list_records(name, rtype, account=None):
 def list_domains(label=None):
     """Every domain in the account, one row per name with its TLDs, from /domain/listAll."""
     account = pc.Porkbun(*pc.porkbun_credentials(label), "")
+    pc.banner(account)
     domains, start = [], 0
     while True:
         page = account.call("POST", "/domain/listAll", {"start": start}).get("domains") or []

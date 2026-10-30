@@ -87,6 +87,7 @@ class FakeApis:
         self.fe_exists = fe_exists
         self.api_access = api_access
         self.writes = []
+        self.rehearsals = []  # creates sent with dryRun, which write nothing
         self.keys = set()  # every Porkbun API key a call carried
 
     def find(self, rtype, name=""):
@@ -106,6 +107,9 @@ class FakeApis:
         if parts[:2] == ["dns", "preflight"]:
             spf = [c for c in self.find("TXT") if c.startswith("v=spf1")]
             return 200, {"status": "SUCCESS", "blockers": ["spf-duplicate"] if len(spf) > 1 else [], "warnings": []}
+        if parts[:2] == ["dns", "create"] and body.get("dryRun"):
+            self.rehearsals.append((body["name"], body["type"], body["content"]))
+            return 200, {"status": "SUCCESS", "dryRun": True, "wouldSucceed": True}
         if parts[:2] == ["dns", "create"]:
             self.writes.append(("create", body["name"], body["type"], body["content"]))
             self.records[str(self.next_id)] = self.from_body(body)

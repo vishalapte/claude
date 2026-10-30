@@ -52,6 +52,8 @@ WRITES = ("/dns/create/", "/dns/edit/", "/dns/delete/", "/dns/restore/", "/dns/i
 WAITS = (2, 5, 10)  # seconds before each resend of a write, when Porkbun names no Retry-After
 MAX_WAIT = 60  # the longest Retry-After a write waits out
 sleep = time.sleep  # the tests replace it
+# A Porkbun sandbox key: same API, simulated domains and DNS, and every answer says sandbox: true.
+SANDBOX_KEY = "pk1_sb_"
 
 
 class Refusal(Exception):
@@ -199,6 +201,7 @@ class Porkbun:
         self.headers = {"X-API-Key": key, "X-Secret-API-Key": secret, "Accept": "application/json"}
         self.domain = domain
         self.warnings = []
+        self.sandbox = key.startswith(SANDBOX_KEY)
 
     def call(self, method, path, body=None):
         """Porkbun's answer to one request. A write is resent, with the same Idempotency-Key, when
@@ -217,6 +220,8 @@ class Porkbun:
             if not write or wait is None or not transient(status, parsed):
                 break
             sleep(retry_after(parsed, wait))
+        if self.sandbox and not (isinstance(parsed, dict) and parsed.get("sandbox") is True):
+            raise Refusal(f"Porkbun {path}: a sandbox key ({SANDBOX_KEY}) got an answer not marked sandbox; stopping")
         if not isinstance(parsed, dict) or parsed.get("status") != "SUCCESS":
             raise Refusal(refused(path, status, parsed, self.domain))
         for warning in parsed.get("warnings") or []:
@@ -247,8 +252,9 @@ class Porkbun:
             fields["prio"] = record.prio
         return fields
 
-    def create(self, record):
-        self.call("POST", f"/dns/create/{self.domain}", self.fields(record))
+    def create(self, record, dry_run=False):
+        """Create the record; with `dry_run`, Porkbun checks it and writes nothing."""
+        return self.call("POST", f"/dns/create/{self.domain}", {**self.fields(record), **({"dryRun": True} if dry_run else {})})
 
     def edit(self, record_id, record):
         self.call("POST", f"/dns/edit/{self.domain}/{record_id}", self.fields(record))
@@ -455,6 +461,39 @@ def apply(porkbun, steps):
     return failed
 
 
+def rehearse(porkbun, steps):
+    """Send each CREATE to Porkbun with dryRun, which writes nothing, and put its verdict on the row.
+
+    Porkbun checks against today's zone, so a create this plan clears the way for (a delete or
+    an edit at the same name, which runs first) may read as failing; the row says so.
+    """
+    clears = {s.record.sub for s in steps if s.action in ("DELETE", "EDIT")}
+    out = []
+    for step in steps:
+        if step.action != "CREATE":
+            out.append(step)
+            continue
+        try:
+            body = porkbun.create(step.record, dry_run=True)
+        except Refusal as err:
+            verdict = f"Porkbun dry run: refuses: {err}"
+        else:
+            if "wouldSucceed" not in body:
+                raise Refusal(f"Porkbun answered a dry-run create without wouldSucceed, so it may have written "
+                              f"{step.record.type} {step.record.sub or '@'}; check the zone with porkbun.py domain")
+            verdict = "Porkbun dry run: ok" if body["wouldSucceed"] else f"Porkbun dry run: refuses: {message_of(body)}"
+        if verdict != "Porkbun dry run: ok" and step.record.sub in clears:
+            verdict += " (checked against today's zone; this plan's delete or edit at the name runs first)"
+        out.append(step._replace(note="; ".join(n for n in (step.note, verdict) if n)))
+    return out
+
+
+def banner(porkbun):
+    """Say so when the key is a sandbox key, before anything else is printed."""
+    if porkbun.sandbox:
+        print("SANDBOX: Porkbun's test system; nothing here changes real DNS")
+
+
 def converge(porkbun, title, requests_of, write, current=None):
     """Plan `requests_of(zone)`, print it, and with `write` apply it, re-read and re-plan.
 
@@ -462,9 +501,12 @@ def converge(porkbun, title, requests_of, write, current=None):
     run with changes pending, a conflict, a failed check), a write was refused, or preflight
     names a blocker.
     """
+    banner(porkbun)
     current = porkbun.records() if current is None else current
     steps = plan(requests_of(current), current)
     changes = [s for s in steps if s.action in ("CREATE", "EDIT", "DELETE")]
+    if changes and not write:
+        steps = rehearse(porkbun, steps)
     print(f"{title}: {len(changes)} changes")
     show(steps, porkbun.domain)
 

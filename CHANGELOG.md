@@ -5,6 +5,16 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.14.0 - 2026-10-30
+
+### Added
+- **A Porkbun dry run asks Porkbun too.** Each planned create is sent with `dryRun: true`,
+  which Porkbun checks (ownership, type, conflicts, the zone's size) without writing, and its
+  verdict goes on the row. An answer without `wouldSucceed` stops the run, since it may mean
+  Porkbun wrote.
+- **Porkbun sandbox keys.** A `pk1_sb_` key runs on Porkbun's test system; the run prints
+  `SANDBOX:` first and refuses any answer not marked `sandbox: true`.
+
 ## 0.13.1 - 2026-10-30
 
 ### Changed

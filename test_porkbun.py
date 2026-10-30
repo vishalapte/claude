@@ -535,6 +535,90 @@ class RefusedWrites(Porkbun):
         self.assertIn("DELETE refused: Porkbun", out.getvalue())
 
 
+class DryRun(Porkbun):
+    """A dry run sends each create to Porkbun with dryRun, which checks it and writes nothing."""
+
+    def test_each_create_is_checked_by_porkbun_and_nothing_is_written(self):
+        apis = Account(porkbun_new_domain())
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1")
+        self.assertEqual(code, 1, out)
+        self.assertIn("[Porkbun dry run: ok]", out)
+        self.assertEqual(apis.rehearsals, [("auth", "A", "192.0.2.1")])
+        self.assertEqual(apis.writes, [])
+
+    def test_with_apply_no_dry_run_is_sent(self):
+        apis = Account(porkbun_new_domain())
+        self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(apis.rehearsals, [])
+
+    def test_porkbuns_refusal_is_on_the_row(self):
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [error(400, "ZONE_RECORD_LIMIT")]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1")
+        self.assertEqual(code, 1, out)
+        self.assertIn("Porkbun dry run: refuses: Porkbun /dns/create/example.com -> 400 ZONE_RECORD_LIMIT", out)
+        self.assertEqual(apis.writes, [])
+
+    def test_a_refusal_this_plans_delete_clears_says_so(self):
+        apis = Flaky([{"name": "www", "type": "A", "content": "192.0.2.9"}],
+                     answers={("create", "host.example.net"): [error(400, "RECORD_CONFLICT")]})
+        pc.http = apis.http
+        cname = pc.Record("www", "CNAME", "host.example.net", 0, None)
+        requests = lambda zone: [*(pc.Request("delete", r, old=r) for r in zone), pc.Request("create", cname)]
+        with redirect_stdout(io.StringIO()) as out:
+            pc.converge(pc.Porkbun("pk1_x", "sk1_x", D), "test", requests, False)
+        self.assertIn("this plan's delete or edit at the name runs first", out.getvalue())
+        self.assertEqual(apis.writes, [])
+
+    def test_an_answer_without_would_succeed_is_refused(self):
+        answered = (200, {"status": "SUCCESS", "id": "900"})
+        apis = Flaky(porkbun_new_domain(), answers={("create", "192.0.2.1"): [answered]})
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1")
+        self.assertEqual(code, 2)
+        self.assertIn("without wouldSucceed, so it may have written", out)
+
+
+class Sandboxed(Account):
+    """Account answering as Porkbun's sandbox does: every answer says sandbox: true."""
+
+    marked = True
+
+    def http(self, method, url, headers, body=None):
+        status, parsed = super().http(method, url, headers, body)
+        if isinstance(parsed, dict) and self.marked:
+            parsed = {**parsed, "sandbox": True}
+        return status, parsed
+
+
+class Sandbox(Porkbun):
+    def setUp(self):
+        super().setUp()
+        self.write_credentials("porkbun", "PORKBUN_API_KEY=pk1_sb_x\nPORKBUN_SECRET_API_KEY=sk1_sb_x\n")
+
+    def test_a_sandbox_key_is_labelled_and_works(self):
+        apis = Sandboxed(porkbun_new_domain())
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith("SANDBOX: Porkbun's test system"), out)
+        self.assertEqual(apis.at("auth", "A"), ["192.0.2.1"])
+
+    def test_the_read_verbs_are_labelled_too(self):
+        code, out = self.run_script(Sandboxed([]), "list")
+        self.assertTrue(out.startswith("SANDBOX:"), out)
+
+    def test_an_answer_not_marked_sandbox_is_refused(self):
+        apis = Sandboxed(porkbun_new_domain())
+        apis.marked = False
+        code, out = self.run_script(apis, "create", "A", f"auth.{D}", "192.0.2.1", "--apply")
+        self.assertEqual(code, 2)
+        self.assertIn("got an answer not marked sandbox", out)
+        self.assertEqual(apis.writes, [])
+
+    def test_a_live_key_is_not_labelled(self):
+        self.write_credentials("porkbun", "PORKBUN_API_KEY=pk1_x\nPORKBUN_SECRET_API_KEY=sk1_x\n")
+        code, out = self.run_script(Account([]), "list")
+        self.assertNotIn("SANDBOX", out)
+
+
 class Help(Porkbun):
     def test_a_bare_call_prints_the_help_without_the_credentials(self):
         self.files["porkbun"].unlink()

@@ -76,6 +76,11 @@ the old value an edit or delete removes) before anything is written.
 For `capture`, tell the owner before you ask in step 7: run it while the domain's current DNS
 host still answers, before the nameservers move to Porkbun; and a scan cannot list a zone, so
 compare the rows with the list at the current host and add any name it missed with `create`.
+IF a `CREATE` row's note says `Porkbun dry run: refuses`, THEN show the owner that note with the row.
+IF that note also says this plan's delete or edit runs first, THEN tell the owner the refusal
+may clear when the plan runs.
+IF the output starts `SANDBOX:`, THEN tell the owner the run used Porkbun's test system.
+
 IF a row is `FAILED` after `--apply`, THEN show the owner its reason and stop; Porkbun names
 the fix in it. The other names were written.
 
@@ -110,6 +115,8 @@ The script reads them only when it plans or prints, after it has checked the arg
   `PORKBUN_SECRET_API_KEY`), mode 600. That file is the default account.
 - Each other account has its own file of the same two lines, mode 600:
   `~/.config/porkbun/credentials.d/<name>`. `--account <name>` reads it instead.
+- A sandbox key pair (`pk1_sb_`, `sk1_sb_`) in an account file runs on Porkbun's test system:
+  nothing changes real DNS, the run prints `SANDBOX:`, and an answer not marked sandbox is refused.
 - The key needs the `read` and `dns` permissions, and the domain needs API access turned on.
 - The Porkbun client is `porkbun_client.py`, beside the script. The email and eninesites
   skills import it from here too, and write through its one plan: the same create, update

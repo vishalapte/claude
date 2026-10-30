@@ -136,7 +136,10 @@ delete requests through the client's one plan, which writes name by name, delete
 and writes nothing at a name that holds a `CONFLICT`. A write Porkbun refuses stops only its
 own name; it is printed as `FAILED` with Porkbun's code, hint and request id, and the run
 exits 1. Every write carries an `Idempotency-Key`, so one that times out, hits the rate limit
-or a server error is resent up to three times without being written twice.
+or a server error is resent up to three times without being written twice. A dry run also
+sends each create to Porkbun with `dryRun: true`, which checks it and writes nothing, and
+shows Porkbun's verdict on the row. A sandbox key (`pk1_sb_`) runs on Porkbun's test system;
+the run prints `SANDBOX:` and refuses any answer not marked sandbox.
 
 `dot-claude/skills/enine-porkbun/` (`/enine-porkbun`) writes one record from a prompt:
 `porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same
