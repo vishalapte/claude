@@ -16,6 +16,7 @@ records by hand in Porkbun's dashboard. With no arguments it prints its help, wi
 | `delete` | name, type, target or "all" | `porkbun.py delete <TYPE> <name> [target]` |
 | `list` | none | `porkbun.py list` |
 | `domain` | name, type or "all" | `porkbun.py domain <name> [--type <TYPE>]` |
+| `capture` | name (the domain) | `porkbun.py capture <domain>` |
 
 The name is the record's full name: the domain itself for the apex, `*.<domain>` for a
 wildcard. The script finds the domain it belongs to in the account. `--prio` sets an MX or SRV
@@ -31,6 +32,7 @@ verifications, so `--match v=spf1` picks the SPF record.
 | `delete` | deletes every record of that type at the name, or only the one whose target the prompt gives; `ok` when none exists. |
 | `list` | prints every domain in the account, one row per name with its TLDs. Writes nothing. |
 | `domain` | prints the records at the name and every name under it; the domain itself prints the whole zone. Writes nothing. |
+| `capture` | asks the domain's live nameservers what they publish (Porkbun's scan, at most 20 an hour) and creates each record Porkbun's zone lacks; deletes Porkbun's parking placeholders. A second SPF record is `CONFLICT`. |
 
 ## Collect the missing parts
 
@@ -39,6 +41,7 @@ verifications, so `--match v=spf1` picks the SPF record.
 3. Do not mark any option "(Recommended)".
 4. Do not offer a name or a target the owner has not given in this session.
 5. Name: ask in a plain message for the record's full name, the domain itself for the apex. End the turn.
+   For `capture`, ask for the domain.
 6. Type for create, update or delete: ask with AskUserQuestion, options `A`, `AAAA`, `CNAME`, `TXT`.
 7. Type for domain: ask with AskUserQuestion, options `All types`, `A`, `CNAME`, `TXT`.
 8. In either type question, Other takes any type the help lists.
@@ -51,7 +54,7 @@ verifications, so `--match v=spf1` picks the SPF record.
 honest set of options, so it is asked as free text. The credentials matter only once there is
 a record to plan, so they come last.
 
-## Write: create, update, delete
+## Write: create, update, delete, capture
 
 1. Pass the target as one quoted argument; IF it starts with `-`, THEN put `--` before it.
 2. Always run the dry run first, without `--apply`, and read every row.
@@ -69,6 +72,10 @@ a record to plan, so they come last.
 **Why:** `--apply` changes public DNS, and invoking the skill does not approve rows the owner
 has not seen. The dry run shows what the prompt resolves to (the zone, the record it matches,
 the old value an edit or delete removes) before anything is written.
+
+For `capture`, tell the owner before you ask in step 7: run it while the domain's current DNS
+host still answers, before the nameservers move to Porkbun; and a scan cannot list a zone, so
+compare the rows with the list at the current host and add any name it missed with `create`.
 
 Rows: `ok` matches, `CREATE` adds, `EDIT` changes the record in place (the note shows the old
 value), `DELETE` removes, `CONFLICT` cannot be applied. Exit 0 conforms or was applied and

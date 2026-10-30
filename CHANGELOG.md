@@ -5,6 +5,16 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.13.0 - 2026-10-30
+
+### Added
+- **`porkbun.py capture <domain>` copies what a domain publishes today into Porkbun's
+  zone.** A domain registered at Porkbun but served by another DNS host loses every record
+  Porkbun's zone lacks when its nameservers move. Porkbun's `/dns/scan` asks the live
+  nameservers what they answer; capture plans one create per record Porkbun lacks, deletes
+  the parking placeholders, and holds a second SPF record as a `CONFLICT`. A dry run by
+  default; `--apply` writes. A scan guesses names, so a name nobody guesses is missed.
+
 ## 0.12.0 - 2026-10-28
 
 ### Changed

@@ -188,6 +188,24 @@ class Porkbun:
         body = self.call("GET", f"/dns/preflight/{self.domain}")
         return body.get("blockers") or [], body.get("warnings") or []
 
+    def scan(self):
+        """The records the domain's live nameservers answer with, from Porkbun's /dns/scan, which
+        writes nothing. NS and SOA describe the delegation, not the zone, so they are left out.
+        The scan may report a record twice; it is kept once (same name, type, content, prio)."""
+        body = self.call("GET", f"/dns/scan/{self.domain}")
+        found = []
+        for item in body.get("records") or []:
+            rtype = item["type"].upper()
+            if rtype in ("NS", "SOA"):
+                continue
+            name = (item.get("name") or "").rstrip(".").lower()
+            sub = "" if name == "@" else to_sub(name, self.domain) if name.endswith(self.domain) else name
+            record = normalize(Record(sub, rtype, item.get("content") or "",
+                                      int(item.get("prio") or 0), int(item.get("ttl") or TTL)))
+            if not any(seen[:4] == record[:4] for seen in found):
+                found.append(record)
+        return found
+
 
 # --- records --------------------------------------------------------------------------
 

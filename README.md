@@ -138,7 +138,9 @@ nothing at a name that holds a `CONFLICT`.
 `dot-claude/skills/enine-porkbun/` (`/enine-porkbun`) writes one record from a prompt:
 `porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same
 arguments; `update --match v=spf1` edits only the record whose value starts with `v=spf1`. `list` prints the account's domains, one row per name with its TLDs, and `domain`
-prints the records at a name and under it. It finds the domain a name belongs to with
+prints the records at a name and under it. `capture` copies the records a domain publishes
+at another DNS host into Porkbun's zone, from Porkbun's scan of its live nameservers, so
+moving the nameservers to Porkbun loses nothing. It finds the domain a name belongs to with
 Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight steps, and owns the
 client the other three import. `enine-porkbun-create`, `enine-porkbun-update`,
 `enine-porkbun-delete`, `enine-porkbun-list` and `enine-porkbun-domain` are the same skill

@@ -15,16 +15,22 @@ pb = load("enine-porkbun", "porkbun.py")
 
 class Account(FakeApis):
     """FakeApis plus /domain/listAll: an exact `domain` match gives 0 or 1 domain; without one,
-    every domain, a page of pb.LIST_PAGE at a time from `start`."""
+    every domain, a page of pb.LIST_PAGE at a time from `start`. /dns/scan answers `scanned`,
+    the records the domain's live nameservers publish, in Porkbun's scan form."""
 
     domains = (D,)
 
-    def __init__(self, records, **kwargs):
+    def __init__(self, records, scanned=(), **kwargs):
         super().__init__(records, **kwargs)
         self.lookups = []
         self.pages = []
+        self.scanned = [dict(r) for r in scanned]
+        self.scans = 0
 
     def http(self, method, url, headers, body=None):
+        if url == f"{pc.PB_API}/dns/scan/{D}":
+            self.scans += 1
+            return 200, {"status": "SUCCESS", "domain": D, "recordCount": len(self.scanned), "records": self.scanned}
         if url == pc.PB_API + "/domain/listAll":
             self.keys.add(headers["X-API-Key"])
         if url == pc.PB_API + "/domain/listAll" and "domain" not in body:
@@ -305,6 +311,90 @@ class List(Porkbun):
         code, out = self.run_script(apis, "list")
         self.assertEqual(code, 0, out)
         self.assertIn("0 domains under 0 names", out)
+
+
+# What another DNS host publishes for D: a scan reports names as prefixes, "" for the apex.
+ELSEWHERE = [
+    {"name": "", "type": "A", "content": "192.0.2.10", "ttl": 300, "prio": None},
+    {"name": "www", "type": "CNAME", "content": "example.com.", "ttl": 300, "prio": None},
+    {"name": "", "type": "MX", "content": "mx1.example.net.", "ttl": 3600, "prio": 10},
+    {"name": "", "type": "TXT", "content": '"v=spf1 include:_spf.example.net -all"', "ttl": 3600, "prio": None},
+    {"name": "", "type": "NS", "content": "ns1.example.net.", "ttl": 3600, "prio": None},
+    {"name": "", "type": "SOA", "content": "ns1.example.net. admin.example.net. 1 7200 900 1209600 300",
+     "ttl": 3600, "prio": None},
+]
+
+
+class Capture(Porkbun):
+    """A domain registered at Porkbun (parking placeholders, Porkbun's NS) served by another host."""
+
+    def zone(self):
+        return [r for r in porkbun_new_domain() if r["type"] in ("ALIAS", "CNAME", "NS")]
+
+    def test_dry_run_lists_each_record_found_and_writes_nothing(self):
+        apis = Account(self.zone(), scanned=ELSEWHERE)
+        code, out = self.run_script(apis, "capture", D)
+        self.assertEqual(code, 1, out)
+        self.assertIn("4 records found at its live nameservers", out)
+        for row in (f"CREATE   A     {D}", f"CREATE   CNAME www.{D}", f"CREATE   MX    {D}",
+                    f"CREATE   TXT   {D}", f"DELETE   ALIAS {D}", f"DELETE   CNAME *.{D}"):
+            self.assertIn(row, out)
+        self.assertNotIn("ns1.example.net", out)  # NS and SOA describe the delegation
+        self.assertIn("Dry run: nothing written", out)
+        self.assertEqual(apis.writes, [])
+        self.assertEqual(apis.scans, 1)
+
+    def test_apply_copies_the_records_and_a_second_run_writes_nothing(self):
+        apis = Account(self.zone(), scanned=ELSEWHERE)
+        code, out = self.run_script(apis, "capture", D, "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(apis.at("", "A"), ["192.0.2.10"])
+        self.assertEqual(apis.at("www", "CNAME"), ["example.com"])
+        self.assertEqual(apis.at("", "MX"), ["mx1.example.net"])
+        self.assertEqual(apis.at("", "TXT"), ["v=spf1 include:_spf.example.net -all"])
+        self.assertEqual(apis.at("", "ALIAS"), [])  # the parking placeholders are gone
+        self.assertEqual(apis.at("", "NS"), ["curitiba.porkbun.com", "salvador.porkbun.com"])
+        self.assertEqual(apis.scans, 1)  # the re-read after apply re-plans the same scan
+        writes = len(apis.writes)
+        code, out = self.run_script(apis, "capture", D)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(apis.writes), writes)
+
+    def test_a_record_porkbun_already_holds_is_ok(self):
+        apis = Account([{"name": "", "type": "MX", "content": "mx1.example.net", "prio": 10}], scanned=ELSEWHERE)
+        code, out = self.run_script(apis, "capture", D)
+        self.assertIn(f"ok       MX    {D}", out)
+
+    def test_another_spf_record_in_the_zone_is_a_conflict(self):
+        zone = self.zone() + [{"name": "", "type": "TXT", "content": "v=spf1 -all"}]
+        apis = Account(zone, scanned=ELSEWHERE)
+        code, out = self.run_script(apis, "capture", D, "--apply")
+        self.assertEqual(code, 1, out)
+        self.assertIn("CONFLICT TXT", out)
+        self.assertIn("another SPF record, v=spf1 -all", out)
+        self.assertEqual(apis.at("", "A"), [])  # nothing is written at the apex
+        self.assertEqual(apis.at("", "ALIAS"), ["pixie.porkbun.com"])
+        self.assertEqual(apis.at("www", "CNAME"), ["example.com"])  # other names still are
+
+    def test_a_record_found_pointing_at_the_parking_host_is_not_copied(self):
+        apis = Account(self.zone(), scanned=[{"name": "*", "type": "CNAME", "content": "pixie.porkbun.com."},
+                                             {"name": "", "type": "A", "content": "192.0.2.10"}])
+        code, out = self.run_script(apis, "capture", D, "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(apis.at("*", "CNAME"), [])
+
+    def test_a_record_the_scan_reports_twice_is_counted_once(self):
+        apis = Account(self.zone(), scanned=ELSEWHERE + [dict(ELSEWHERE[0], ttl=600), ELSEWHERE[2]])
+        code, out = self.run_script(apis, "capture", D)
+        self.assertIn("4 records found", out)
+        self.assertEqual(out.count(f"CREATE   A     {D}"), 1)
+
+    def test_a_scan_that_finds_nothing_is_refused(self):
+        apis = Account(self.zone(), scanned=[ELSEWHERE[4]])
+        code, out = self.run_script(apis, "capture", D, "--apply")
+        self.assertEqual(code, 2)
+        self.assertIn("found no records", out)
+        self.assertEqual(apis.writes, [])
 
 
 class Help(Porkbun):

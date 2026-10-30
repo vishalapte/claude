@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Create, update or delete one DNS record at Porkbun, list the account's domains, or show a
-domain's records.
+"""Create, update or delete one DNS record at Porkbun, list the account's domains, show a
+domain's records, or capture the records a domain publishes elsewhere into Porkbun's zone.
 
 Usage
   porkbun.py <verb> <TYPE> <name> [target] [--prio N] [--ttl N] [--match P] [--apply] [--account NAME]
   porkbun.py list [--account NAME]
   porkbun.py domain <name> [--type TYPE] [--account NAME]
+  porkbun.py capture <domain> [--apply] [--account NAME]
 
 Examples (each is a dry run that writes nothing; add --apply to write)
   porkbun.py create A     example.com      192.168.0.1        A record at the apex
@@ -22,6 +23,7 @@ Examples (each is a dry run that writes nothing; add --apply to write)
   porkbun.py domain example.com                               every record in the zone
   porkbun.py domain www.example.com --type A                  the A records at www and under it
   porkbun.py list --account acme                              every domain in the account acme
+  porkbun.py capture example.com                              copy what example.com publishes today
 
 Verbs
   create   add the record; does nothing when an identical record exists
@@ -30,6 +32,10 @@ Verbs
   delete   remove every <TYPE> record at <name>, or only the one holding <target>
   list     print every domain in the account, one row per name with its TLDs; writes nothing
   domain   print the records at <name> and every name under it; writes nothing
+  capture  ask the domain's live nameservers what they publish (Porkbun's /dns/scan, at most
+           20 an hour) and create in Porkbun's zone each record it lacks, deleting Porkbun's
+           parking placeholders; run it before the nameservers move to Porkbun. A scan cannot
+           list a zone, so a name nobody guesses is missed
 
 Arguments
   <TYPE>     {types}
@@ -47,12 +53,13 @@ Rows printed
   CREATE    adds the record
   EDIT      changes it in place; the note shows the old value
   DELETE    removes it
-  CONFLICT  cannot be applied (a CNAME sharing a name, an update with none or several)
+  CONFLICT  cannot be applied (a CNAME sharing a name, an update with none or several, a
+            second SPF record)
 
 Exit
   0  done, already as asked, or printed
   1  changes pending (dry run), a conflict, or the check after --apply failed
-  2  refused: a bad argument, the credentials, or Porkbun's API
+  2  refused: a bad argument, the credentials, Porkbun's API, or a scan that found nothing
 
 Credentials: ~/.config/porkbun/credentials (PORKBUN_API_KEY, PORKBUN_SECRET_API_KEY), mode 600,
 holds the default account. Each other account has its own file of the same two lines,
@@ -140,12 +147,41 @@ def list_domains(label=None):
     return 0
 
 
+def captured(found, zone):
+    """Requests that copy `found` into `zone`: the parking placeholders go, each found record is
+    created unless the zone holds it, and a found SPF record the zone holds another of is a
+    CONFLICT (RFC 7208 allows one). Found records pointing at the parking host are not copied."""
+    spf = [r for r in zone if r.sub == "" and r.type == "TXT" and r.content.lower().startswith("v=spf1")]
+    requests = pc.parking(zone)
+    for record in found:
+        if record.content in pc.PORKBUN_PARKING:
+            continue
+        other = [r for r in spf if r.content != record.content]
+        if record.sub == "" and record.type == "TXT" and record.content.lower().startswith("v=spf1") and other:
+            note = f"the zone holds another SPF record, {other[0].content}; update it to this one first"
+            requests.append(pc.Step("CONFLICT", record, note=note))
+        else:
+            requests.append(pc.Request("create", record))
+    return requests
+
+
+def capture(name, write, account=None):
+    porkbun, domain = connect(name, account)
+    found = porkbun.scan()
+    if not found:
+        raise pc.Refusal(f"Porkbun's scan found no records at {domain}'s live nameservers; nothing to capture")
+    title = f"Porkbun capture {domain}: {len(found)} records found at its live nameservers"
+    return 1 if pc.converge(porkbun, title, lambda zone: captured(found, zone), write) else 0
+
+
 def run(args):
     if args.verb == "list":
         return list_domains(args.account)
     name = args.name.strip().rstrip(".").lower()
     if args.verb == "domain":
         return list_records(name, args.type, args.account)
+    if args.verb == "capture":
+        return capture(name, args.apply, args.account)
     content = " ".join(args.content).strip()
     if args.verb != "delete" and not content:
         raise pc.Refusal(f"{args.verb} needs the record's content")
@@ -191,6 +227,10 @@ def main():
     domain = verbs.add_parser("domain", help="print the records at a name and under it")
     domain.add_argument("name", help="the name; the domain itself prints the whole zone")
     domain.add_argument("--type", type=str.upper, choices=TYPES, help="only records of this type")
+    capture_parser = verbs.add_parser("capture", help="copy the records the domain publishes today into Porkbun's zone")
+    capture_parser.add_argument("name", metavar="domain", help="the domain")
+    capture_parser.add_argument("--apply", action="store_true",
+                                help="change DNS (without it, a dry run that writes nothing)")
     # Before the verb or after it: a verb's own --account leaves the top-level one alone when absent.
     for verb_parser in verbs.choices.values():
         verb_parser.add_argument("--account", metavar="NAME", default=argparse.SUPPRESS, help=account_help)
