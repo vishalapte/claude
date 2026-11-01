@@ -177,6 +177,51 @@ against Porkbun's sandbox, which changes nothing real, when
 `~/.config/porkbun/credentials.d/sandbox` holds a sandbox key pair (`pk1_sb_`) and the sandbox
 account holds a domain; otherwise it skips.
 
+## Mail
+
+`dot-claude/skills/enine-mail/` (`/enine-mail`) works a mail store, such as the one delphi and
+the wicket harvest share, and sends mail through AWS SES. `mail.py` is
+stdlib only, ported from delphi's `mail` noun:
+
+- `search` finds stored mail by `--from --to --cc --bcc --subject --after --before`, or a
+  Gmail-style `--query`, newest first; `resolve <message-id>` prints the stored `.eml`. Both
+  only read. A search term matches whole words, as in Gmail: `oci` finds "OCI card" but not
+  "Social". `alice@example.com` and `example.org` still find mail to or from them, since `@` and
+  `.` separate words, and `art*` is a prefix that finds "Arts". The flags and `--query` share
+  Gmail's grammar: words side by side are ANDed, `or` and `and` in any case combine them, `-word`
+  excludes, and quotes make a phrase or the literal word "or"; `--from X` is `from:(X)`.
+- `ingest <file.eml>...` files a tracked `.eml` byte for byte on the harvest's layout,
+  `<account>/archive/<counterparty-domain>/<YYYY-MM>/<sha1(message-key)[:16]>.eml`; it moves the
+  file, or keeps it with `--copy`.
+- `pin <message-id>...` locks each id's stored `.eml` with the macOS user-immutable flag, so
+  nothing can delete it; `--check` exits 1 when one is unlocked or missing, and
+  `--unpin <message-id>...` is the only unlock. delphi supplies the ids.
+- `draft` builds draft N, the exact bytes SES will get, and shows it; with no arguments it
+  lists the drafts and the mail sent.
+- `send N` shows draft N as it will go, and `send N --apply` sends it through
+  `aws sesv2 send-email`. `send` with message arguments drafts first and shows the draft.
+  `--apply` takes only a draft number, so what goes out is the draft that was shown. The
+  draft is marked `sending` before SES is called, so a retry cannot send it twice.
+
+`ingest`, `pin` and `send` are dry runs without `--apply`, and the skill asks the owner before
+it applies one.
+
+The skill holds no path and no sender: the repo or person that uses it supplies five paths,
+each by a flag or an environment variable, the flag winning. None has a default, and a verb
+that needs one that is not given refuses and names both.
+
+| Path | Flag | Variable | Needed by |
+|---|---|---|---|
+| the mail store | `--store DIR` | `ENINE_MAIL_STORE` | `search`, `resolve`, `ingest`, `pin`; a reply's threading |
+| the owner-address file | `--identity FILE` | `ENINE_MAIL_IDENTITY` | `ingest`, to tell sent mail from received |
+| the sender config | `--senders FILE` | `ENINE_MAIL_SENDERS` | building a draft: per domain the SES profile, region, Bcc, Reply-To and sender name |
+| the drafts folder | `--drafts DIR` | `ENINE_MAIL_DRAFTS` | `draft`, `send` |
+| the sent log | `--sent FILE` | `ENINE_MAIL_SENT` | `draft` with no arguments, `send N --apply`; a reply's threading |
+
+Tests: `python3 -m unittest test_mail test_mail_search test_mail_send`. They remove any
+`ENINE_MAIL_*` variable from the environment, set the five to a temp dir, and replace the `aws`
+call, so they read no mail, config or credentials and send nothing.
+
 ## Users on a hand-built host
 
 `dot-claude/skills/linux-create-user/` (`/linux-create-user`) creates one account on a remote

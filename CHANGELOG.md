@@ -5,6 +5,29 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.13.0 - 2026-11-01
+
+### Added
+- **`/enine-mail` and `skills/enine-mail/mail.py`** search, resolve, file and pin mail in a mail
+  store, and draft and send mail through AWS SES:
+  - `search` takes header flags and a Gmail-style `--query` under one grammar (`--from X` is
+    `from:(X)`; `and` and `or` in any case). A term matches whole words; `word*` is a prefix.
+    `filename:` reads only the files whose attachment headers can hold the term, and a subject
+    search skips the files wicket's manifest rules out.
+  - `resolve` and `pin` look a Message-ID up in wicket's manifest, then in each file's own
+    header. `pin` takes the message-ids to lock.
+  - `ingest` files a `.eml` byte for byte, and reports `exists` for a message already stored
+    under any name.
+  - `draft` builds, lists and shows drafts; `send N` shows draft N and `send N --apply` sends
+    it with the draft's own From. SES sets the Date when it sends.
+  - `ingest`, `pin` and `send` are dry runs until `--apply`.
+  - The mail store, the owner-address file, the sender config, the drafts folder and the sent
+    log each come from a flag (`--store`, `--identity`, `--senders`, `--drafts`, `--sent`) or an
+    environment variable (`ENINE_MAIL_STORE`, `ENINE_MAIL_IDENTITY`, `ENINE_MAIL_SENDERS`,
+    `ENINE_MAIL_DRAFTS`, `ENINE_MAIL_SENT`), the flag winning. None has a default; a verb that
+    needs one that is not given refuses and names both. The display name comes from the
+    sender config.
+
 ## 0.12.0 - 2026-11-01
 
 ### Added
