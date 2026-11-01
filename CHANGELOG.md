@@ -5,6 +5,16 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.12.0 - 2026-11-01
+
+### Added
+- **`/enine-aws-ses` and `skills/enine-aws-ses/ses_identity.py <domain>`.** With `--profile`,
+  it creates the SES identity, or sets it to 2048-bit Easy DKIM and MAIL FROM
+  `hermes.<domain>`; without one it skips SES and says so. It prints the six Porkbun records
+  SES needs (three DKIM CNAMEs, the MAIL FROM MX and SPF, DMARC) as `porkbun.py create`
+  commands. Region and MAIL FROM follow the sender config (`--senders FILE` or
+  `ENINE_MAIL_SENDERS`, no default); `--sender-profile` adds the domain there.
+
 ## 0.11.0 - 2026-11-01
 
 ### Added

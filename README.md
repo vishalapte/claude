@@ -162,8 +162,17 @@ client the other three import. `enine-porkbun-create`, `enine-porkbun-update`,
 with the verb fixed: each points at `enine-porkbun/PROCEDURE.md`, the one procedure all six
 follow.
 
+`dot-claude/skills/enine-aws-ses/` (`/enine-aws-ses`) sets a domain up to send through AWS SES.
+`ses_identity.py` creates the SES identity or brings it to 2048-bit Easy DKIM and MAIL FROM
+`hermes.<domain>`, when `--profile` names an AWS profile that may change SES there; otherwise it
+says the SES half was skipped. It then prints the six `porkbun.py create` commands (three DKIM
+CNAMEs, the MAIL FROM MX and SPF, DMARC), which the skill runs as dry runs and applies on the
+owner's yes. Region and MAIL FROM come from the sender config (`--senders FILE` or
+`ENINE_MAIL_SENDERS`, no default) when it lists the domain, and `--sender-profile` adds the
+domain there.
+
 Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites
-test_configure_domain_fastmail test_porkbun`. `test_porkbun_sandbox` runs `porkbun.py` itself
+test_configure_domain_fastmail test_porkbun test_aws_ses`. `test_porkbun_sandbox` runs `porkbun.py` itself
 against Porkbun's sandbox, which changes nothing real, when
 `~/.config/porkbun/credentials.d/sandbox` holds a sandbox key pair (`pk1_sb_`) and the sandbox
 account holds a domain; otherwise it skips.
