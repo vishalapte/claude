@@ -5,6 +5,64 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.11.0 - 2026-11-01
+
+### Added
+- **`skills/enine-porkbun/` (`/enine-porkbun`) creates, updates and deletes Porkbun DNS
+  records and reads the account.** `porkbun.py create|update|delete <TYPE> <name> [target]`
+  finds the domain a name belongs to, dry-runs by default, and with `--apply` writes, re-reads
+  the zone and runs Porkbun's preflight. `list` prints the account's domains, one row per name
+  with its TLDs; `domain` prints the records at a name and under it. `update --match PREFIX`
+  edits only the record whose value starts with PREFIX. `delete` with no target removes the
+  one record of the type at the name; several is a `CONFLICT` unless `--all` is given.
+  `/enine-porkbun-create`, `-update`, `-delete`, `-list` and `-domain` are the same skill with
+  the verb fixed; all six follow `skills/enine-porkbun/PROCEDURE.md`.
+- **A name holds one SPF and one DMARC record.** `create` of an SPF record attaches it to the
+  one at the name: its missing terms are added, the record's `all` stays as set, and a record
+  without one gets `-all` unless it uses `redirect=`. `create` of a DMARC record where another
+  is held is a `CONFLICT` that `update --match v=DMARC1` replaces.
+- **`porkbun.py capture <domain>`** copies the records a domain's live nameservers publish
+  into Porkbun's zone, from Porkbun's scan. A scan cannot list a zone, so a name nobody
+  guesses is not found.
+- **`porkbun.py history`, `restore` and `check`.** `history` lists the zone's restore points;
+  `restore <domain> <point>` puts one back (`--prune` also deletes what was added since),
+  showing Porkbun's diff and dry run first and printing the command that undoes it. `check
+  <domain> --intent move-nameservers|transfer-out|enable-dnssec` prints Porkbun's preflight.
+- **`skills/enine-porkbun-fastmail/` (`/enine-porkbun-fastmail`) sets a domain's DNS for
+  Fastmail:** the `fm1`, `fm2` and `fm3._domainkey` CNAMEs and Fastmail's include in the SPF
+  record; `--mx` also edits the apex MX into Fastmail's two. It prints the steps left at
+  Fastmail.
+- **`--account NAME`** selects another Porkbun account, whose keys are in
+  `~/.config/porkbun/credentials.d/NAME`; `~/.config/porkbun/credentials` is the default.
+- **One plan in `skills/enine-porkbun/porkbun_client.py` writes for every Porkbun skill.** It
+  writes name by name, each name's deletes first; a name holding a `CONFLICT` gets no writes;
+  a refused write stops only its own name and is printed as `FAILED` with Porkbun's code,
+  hint, the records in the way and request id. Every write carries an `Idempotency-Key`, and
+  a write or read that meets a rate limit, a server error or no answer is resent up to three
+  times. A dry run sends each planned create to Porkbun with `dryRun: true` and shows its
+  verdict on the row.
+- **Porkbun's placeholders are deleted wherever a skill writes:** records pointing at its
+  parking hosts (`pixie.porkbun.com`, `uixie.porkbun.com`), MX to its forwarders
+  (`fwd1`, `fwd2.porkbun.com`) and an SPF record naming only `include:_spf.porkbun.com`. The
+  Forward Email skill, and Fastmail's with `--mx`, edit the forwarding MX into theirs in
+  place. NS records are never placeholders.
+- **`create` is `ok` when a record with the same value exists, whatever its TTL.** An `ALIAS`
+  below the apex is held alone at its name, as a CNAME is (RFC 1034). Host values (`CNAME`,
+  `ALIAS`, `MX`, `NS`, `SRV`) compare lowercase without the trailing dot.
+- **`fe_porkbun.py` keeps another mail host's apex MX** as a `CONFLICT` that holds the apex;
+  `--force` replaces it.
+- **Porkbun sandbox keys.** A `pk1_sb_` key runs on Porkbun's test system: the run prints
+  `SANDBOX:` and refuses any answer not marked `sandbox: true`. `test_porkbun_sandbox.py` runs
+  `porkbun.py` there when `~/.config/porkbun/credentials.d/sandbox` holds one.
+- **`test_porkbun.py` and `test_configure_domain_fastmail.py`** run the scripts against the
+  Porkbun fake in `test_configure_domain_email.py`.
+
+### Changed
+- **The domain skills move under `enine-porkbun`:**
+  `enine-configure-domain-email-via-forwardemail` is `enine-porkbun-forwardemail`, and
+  `enine-configure-domain-eninesites` is `enine-porkbun-eninesites`. `./install` leaves the
+  old directories in `~/.claude/skills/`.
+
 ## 0.10.0 - 2026-10-28
 
 ### Changed

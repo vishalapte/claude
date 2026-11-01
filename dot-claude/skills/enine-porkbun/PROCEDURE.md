@@ -1,0 +1,146 @@
+# Porkbun DNS: the shared procedure
+
+`/enine-porkbun` and the verb skills `/enine-porkbun-create`, `/enine-porkbun-update`,
+`/enine-porkbun-delete`, `/enine-porkbun-list` and `/enine-porkbun-domain` follow this file.
+The caller fixes the verb; everything else is here, once.
+
+One script does the work: `python3 ~/.claude/skills/enine-porkbun/porkbun.py`. Run it; do not edit
+records by hand in Porkbun's dashboard. With no arguments it prints its help, with examples.
+
+## The parts of each verb
+
+| Verb | Parts, in the order they are asked | Command |
+|---|---|---|
+| `create` | name, type, target | `porkbun.py create <TYPE> <name> <target>` |
+| `update` | name, type, target | `porkbun.py update <TYPE> <name> <target> [--match <prefix>]` |
+| `delete` | name, type, target or "all" | `porkbun.py delete <TYPE> <name> [target \| --all]` |
+| `list` | none | `porkbun.py list` |
+| `domain` | name, type or "all" | `porkbun.py domain <name> [--type <TYPE>]` |
+| `capture` | name (the domain) | `porkbun.py capture <domain>` |
+| `history` | name (the domain) | `porkbun.py history <domain>` |
+| `restore` | name (the domain), restore point | `porkbun.py restore <domain> <point> [--prune]` |
+| `check` | name (the domain), intent | `porkbun.py check <domain> --intent <intent>` |
+
+The name is the record's full name: the domain itself for the apex, `*.<domain>` for a
+wildcard. The script finds the domain it belongs to in the account. `--prio` sets an MX or SRV
+priority and `--ttl` the time to live; a create defaults to 0 and 600, an update keeps the
+record's own. Pass `--match` only when the prompt gives it, or when a dry run's `CONFLICT`
+names several records and the owner says which one: an apex TXT holds SPF beside site
+verifications, so `--match v=spf1` picks the SPF record.
+
+| Verb | Does |
+|---|---|
+| `create` | adds the record; `ok` when one with the same value exists, whatever its TTL. Another record of the same type at the name stays (round-robin A is legitimate), and the row's note counts them. A name holds one SPF and one DMARC: an SPF record is attached to the one there (an `EDIT`, its missing terms added; an `all` already set never changes, and a record without one gets `-all`), and a DMARC record where another is held is `CONFLICT`. |
+| `update` | edits the one record of that type at the name; with `--match <prefix>`, the one whose value starts with it, in any case. None is `CONFLICT` (use create); several is `CONFLICT` (delete the extras, or pass `--match`). |
+| `delete` | deletes the record whose target the prompt gives; with none, the one record of that type at the name, and with several, `CONFLICT` naming them unless `--all` is passed. `ok` when none exists. |
+| `list` | prints every domain in the account, one row per name with its TLDs. Writes nothing. |
+| `domain` | prints the records at the name and every name under it; the domain itself prints the whole zone. Writes nothing. |
+| `capture` | asks the domain's live nameservers what they publish (Porkbun's scan, at most 20 an hour) and creates each record Porkbun's zone lacks, by `create`'s rules; deletes Porkbun's placeholders: its parking page, its forwarding MX and its own SPF. |
+| `history` | prints the zone's restore points, newest first; `(the live zone)` marks the one the zone matches. Writes nothing. |
+| `restore` | puts the zone back as it was at a restore point: adds back what is missing; `--prune` also deletes what was added since. Prints the command that undoes it. |
+| `check` | prints Porkbun's preflight for a change: `general`, `move-nameservers`, `transfer-out` or `enable-dnssec`. A blocker exits 1. Writes nothing. |
+
+## Collect the missing parts
+
+1. Ask only for the parts the prompt does not give, one question at a time, in the table's order.
+2. Do not read the credentials, call Porkbun or run the script on a record until every part is known.
+3. Do not mark any option "(Recommended)".
+4. Do not offer a name or a target the owner has not given in this session.
+5. Name: ask in a plain message for the record's full name, the domain itself for the apex. End the turn.
+   For `capture`, `history`, `restore` and `check`, ask for the domain.
+6. Type for create, update or delete: ask with AskUserQuestion, options `A`, `AAAA`, `CNAME`, `TXT`.
+7. Type for domain: ask with AskUserQuestion, options `All types`, `A`, `CNAME`, `TXT`.
+8. In either type question, Other takes any type the help lists.
+9. Target for create or update: ask in a plain message what value the `<TYPE>` record at `<name>` should hold. End the turn.
+10. Target for delete: ask in a plain message for the value to delete, or "all" for every `<TYPE>` record at `<name>`. End the turn.
+11. IF the owner answers "all" for delete, THEN pass `--all` and no target.
+12. IF the owner answers "All types" for domain, THEN leave `--type` out of the command.
+13. Restore point for `restore`: ask in a plain message which point. End the turn.
+14. IF the owner does not know the point, THEN run `porkbun.py history <domain>`, which writes nothing, and show it.
+15. For `restore`, ask whether to delete what was added since the point; IF yes, THEN add `--prune`.
+16. Intent for `check`: ask with AskUserQuestion, options `general`, `move-nameservers`, `transfer-out`, `enable-dnssec`.
+17. With every part known, continue at "Write" or "Read".
+
+**Why:** the owner states each part; the skill does not propose one. A name or a value has no
+honest set of options, so it is asked as free text. The credentials matter only once there is
+a record to plan, so they come last.
+
+## Write: create, update, delete, capture, restore
+
+1. Pass the target as one quoted argument; IF it starts with `-`, THEN put `--` before it.
+2. Always run the dry run first, without `--apply`, and read every row.
+3. IF every row is `ok`, THEN report that the record is already as asked and stop.
+4. IF a `create` row is the DMARC or CNAME `CONFLICT` saying update replaces it, THEN show the record that is there.
+5. IF any other row is `CONFLICT`, THEN report it to the owner and stop; do not work around it.
+6. IF a row is `CREATE`, `EDIT` or `DELETE`, THEN show the owner every such row as a table.
+7. IF a row is `EDIT` or `DELETE`, THEN include the old value from its note.
+8. IF a `CREATE` row's note says other records of its type stay, THEN show the owner those records too.
+9. After you show the rows, ask the owner with AskUserQuestion, in the same turn as the dry run.
+10. IF step 4 or step 8 showed a record already there, THEN offer "Replace it", "Do not apply" and, for step 8, "Add beside it".
+11. Otherwise, offer "Apply" and "Do not apply".
+12. IF the owner chooses "Apply" or "Add beside it", THEN run the same command with `--apply`.
+13. IF the owner chooses "Replace it" and one record is there, THEN run `update` with the same type, name and value, plus `--apply`.
+14. For that `update` of a TXT record, pass `--match` with the start of the record it replaces, `v=DMARC1` for DMARC.
+15. IF the owner chooses "Replace it" and several are there, THEN delete each: `porkbun.py delete <TYPE> <name> <old value> --apply`.
+16. After those deletes, run the `create` with `--apply`.
+17. IF the owner chooses anything else, THEN stop and write nothing.
+18. After `--apply`, paste the final output and the exit code.
+19. IF the exit code is 2, THEN report the refusal message; do not work around it.
+
+**Why:** `--apply` changes public DNS, and invoking the skill does not approve rows the owner
+has not seen. The dry run shows what the prompt resolves to (the zone, the record it matches,
+the old value an edit or delete removes) before anything is written. `create` creates, `update`
+edits and `delete` deletes, so replacing a record already there is the owner's choice, made in
+the same prompt: an `update` for one record, deletes and then the `create` for several. An SPF
+record needs no choice, since it attaches to the one there.
+
+For `capture`, tell the owner before you ask in step 9: run it while the domain's current DNS
+host still answers, before the nameservers move to Porkbun; and a scan cannot list a zone, so
+compare the rows with the list at the current host and add any name it missed with `create`.
+IF a `CREATE` row's note says `Porkbun dry run: refuses`, THEN show the owner that note with the row.
+IF that note also says this plan's delete or edit runs first, THEN tell the owner the refusal
+may clear when the plan runs.
+IF the output starts `SANDBOX:`, THEN tell the owner the run used Porkbun's test system.
+
+IF a row is `FAILED` after `--apply`, THEN show the owner its reason and stop; Porkbun names
+the fix in it. The other names were written.
+
+Rows: `ok` matches, `CREATE` adds, `EDIT` changes the record in place (the note shows the old
+value), `DELETE` removes, `CONFLICT` cannot be applied, `FAILED` was refused by Porkbun or skipped after a refusal at its name. Exit 0 conforms or was applied and
+verified, 1 something drifts, conflicts, was refused or failed to verify (a dry run with changes pending
+exits 1), 2 could not decide. A preflight blocker exits 1 even when the record is right; it
+names a problem elsewhere in the zone, so report it.
+
+## Read: list, domain, history, check
+
+1. For `list`, run `porkbun.py list`.
+2. For `domain`, run `porkbun.py domain <name>`, with `--type <TYPE>` when the owner named a type.
+3. For `history`, run `porkbun.py history <domain>`.
+4. For `check`, run `porkbun.py check <domain> --intent <intent>`; report every blocker and warning with its next step.
+5. Show the owner what it prints as a table. Ask nothing more: none of these verbs writes.
+6. IF the exit code is 2, THEN report the refusal message; do not work around it.
+
+## Account
+
+1. IF the prompt names a Porkbun account, THEN add `--account <name>` to every run of the script.
+2. IF a run refuses because the account does not hold the name, and it lists other accounts, THEN ask the owner.
+3. Ask with AskUserQuestion which account holds the name; give the accounts the refusal lists as options.
+4. Rerun the same command with `--account <the chosen name>`.
+
+**Why:** the owner picks the account; the script never tries one on its own. A refusal
+writes nothing, so asking after it costs nothing.
+
+## Credentials
+
+The script reads them only when it plans or prints, after it has checked the arguments.
+
+- The Porkbun keys are in `~/.config/porkbun/credentials` (`PORKBUN_API_KEY`,
+  `PORKBUN_SECRET_API_KEY`), mode 600. That file is the default account.
+- Each other account has its own file of the same two lines, mode 600:
+  `~/.config/porkbun/credentials.d/<name>`. `--account <name>` reads it instead.
+- A sandbox key pair (`pk1_sb_`, `sk1_sb_`) in an account file runs on Porkbun's test system:
+  nothing changes real DNS, the run prints `SANDBOX:`, and an answer not marked sandbox is refused.
+- The key needs the `read` and `dns` permissions, and the domain needs API access turned on.
+- The Porkbun client is `porkbun_client.py`, beside the script. The email and eninesites
+  skills import it from here too, and write through its one plan: the same create, update
+  and delete, with deletes applied first and no write at a name that holds a `CONFLICT`.

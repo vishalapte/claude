@@ -1,10 +1,10 @@
-"""Tests for dot-claude/skills/enine-configure-domain-email-via-forwardemail. Run: python3 -m unittest test_configure_domain_email
+"""Tests for dot-claude/skills/enine-porkbun-forwardemail. Run: python3 -m unittest test_configure_domain_email
 
 Lives at the repo root for the reason test_git_boundary.py gives: a top-level file never
 reaches ~/.claude.
 
 Every test runs against in-memory Forward Email and Porkbun fakes (FakeApis replaces the
-script's one HTTP function) and never touches the network or the real credentials files.
+one HTTP function, in porkbun_client.py) and never touches the network or the real credentials files.
 The zone file is written in the format of helpers/get-zone-file.js in forwardemail.net.
 test_configure_domain_eninesites imports FakeApis and load() from here.
 """
@@ -33,7 +33,8 @@ def load(name, filename):
     return module
 
 
-fp = load("enine-configure-domain-email-via-forwardemail", "fe_porkbun.py")
+fp = load("enine-porkbun-forwardemail", "fe_porkbun.py")
+pc = sys.modules["porkbun_client"]  # the Porkbun client fe_porkbun imports: one http for both APIs
 D = "example.com"
 DKIM = "v=DKIM1; k=rsa; p=" + "A" * 392 + ";"
 
@@ -86,6 +87,8 @@ class FakeApis:
         self.fe_exists = fe_exists
         self.api_access = api_access
         self.writes = []
+        self.rehearsals = []  # creates sent with dryRun, which write nothing
+        self.keys = set()  # every Porkbun API key a call carried
 
     def find(self, rtype, name=""):
         return sorted(r["content"] for r in self.records.values() if r["type"] == rtype and r["name"] == name)
@@ -95,7 +98,8 @@ class FakeApis:
             return self.forward_email(method, url[len(fp.FE_API):], body)
         if not self.api_access:
             return 400, {"status": "ERROR", "code": "API_ACCESS_DISABLED", "message": "not opted in"}
-        parts = url[len(fp.PB_API):].strip("/").split("/")
+        parts = url[len(pc.PB_API):].strip("/").split("/")
+        self.keys.add(headers["X-API-Key"])
         if method == "POST":
             assert body["apikey"] and body["secretapikey"]
         if parts[:2] == ["dns", "retrieve"]:
@@ -103,6 +107,9 @@ class FakeApis:
         if parts[:2] == ["dns", "preflight"]:
             spf = [c for c in self.find("TXT") if c.startswith("v=spf1")]
             return 200, {"status": "SUCCESS", "blockers": ["spf-duplicate"] if len(spf) > 1 else [], "warnings": []}
+        if parts[:2] == ["dns", "create"] and body.get("dryRun"):
+            self.rehearsals.append((body["name"], body["type"], body["content"]))
+            return 200, {"status": "SUCCESS", "dryRun": True, "wouldSucceed": True}
         if parts[:2] == ["dns", "create"]:
             self.writes.append(("create", body["name"], body["type"], body["content"]))
             self.records[str(self.next_id)] = self.from_body(body)
@@ -160,15 +167,18 @@ class Run(unittest.TestCase):
         }
         self.write_credentials("forwardemail", "FORWARDEMAIL_API_KEY=fe\n")
         self.write_credentials("porkbun", "PORKBUN_API_KEY=pk1_x\nPORKBUN_SECRET_API_KEY='sk1_x'\n")
-        self.saved = (fp.http, fp.CREDENTIALS, fp.PORKBUN_CREDENTIALS)
-        fp.PORKBUN_CREDENTIALS = self.files["porkbun"]
-        fp.CREDENTIALS = {
-            self.files["forwardemail"]: ("FORWARDEMAIL_API_KEY",),
-            self.files["porkbun"]: ("PORKBUN_API_KEY", "PORKBUN_SECRET_API_KEY"),
-        }
+        self.saved = (pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS, pc.PORKBUN_ACCOUNTS)
+        pc.PORKBUN_CREDENTIALS = self.files["porkbun"]
+        pc.PORKBUN_ACCOUNTS = self.home / "porkbun" / "credentials.d"
+        fp.CREDENTIALS = {self.files["forwardemail"]: ("FORWARDEMAIL_API_KEY",)}
 
     def tearDown(self):
-        fp.http, fp.CREDENTIALS, fp.PORKBUN_CREDENTIALS = self.saved
+        pc.http, fp.CREDENTIALS, pc.PORKBUN_CREDENTIALS, pc.PORKBUN_ACCOUNTS = self.saved
+
+    def write_account(self, name, key, mode=0o600):
+        """credentials.d/<name>, another Porkbun account whose API key is `key`."""
+        self.files[name] = pc.PORKBUN_ACCOUNTS / name
+        self.write_credentials(name, f"PORKBUN_API_KEY={key}\nPORKBUN_SECRET_API_KEY=sk1_{name}\n", mode)
 
     def write_credentials(self, service, text, mode=0o600):
         path = self.files[service]
@@ -176,10 +186,14 @@ class Run(unittest.TestCase):
         path.write_text(text)
         path.chmod(mode)
 
+    def argv(self, *argv):
+        """The command line run_script passes; a script whose first argument is not the domain overrides it."""
+        return [self.argv0, D, *argv]
+
     def run_script(self, apis, *argv):
-        fp.http = apis.http
+        pc.http = apis.http
         out, err = io.StringIO(), io.StringIO()
-        saved_argv, sys.argv = sys.argv, [self.argv0, D, *argv]
+        saved_argv, sys.argv = sys.argv, self.argv(*argv)
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 with self.assertRaises(SystemExit) as exit_:
@@ -223,7 +237,7 @@ class Apply(Run):
     def setUp(self):
         super().setUp()
         self.apis = FakeApis(porkbun_new_domain())
-        self.code, self.out = self.run_script(self.apis, "--apply", "--catchall", "false")
+        self.code, self.out = self.run_script(self.apis, "--apply", "--force", "--catchall", "false")
 
     def test_creates_the_domain_converges_and_verifies(self):
         self.assertEqual(self.code, 0, self.out)
@@ -234,9 +248,9 @@ class Apply(Run):
     def test_other_mx_are_replaced(self):
         self.assertEqual(self.apis.find("MX"), ["mx1.forwardemail.net", "mx2.forwardemail.net"])
 
-    def test_spf_is_merged_and_other_apex_txt_kept(self):
+    def test_porkbuns_spf_is_replaced_and_other_apex_txt_kept(self):
         txt = self.apis.find("TXT")
-        self.assertIn("v=spf1 include:spf.forwardemail.net include:_spf.porkbun.com ~all", txt)
+        self.assertIn("v=spf1 include:spf.forwardemail.net -all", txt)
         self.assertIn("google-site-verification=keepme", txt)
         self.assertEqual(sum(t.startswith("v=spf1") for t in txt), 1)
 
@@ -256,6 +270,74 @@ class Apply(Run):
         self.assertEqual(len(self.apis.writes), before)
 
 
+    def test_the_old_mx_are_updated_in_place_so_the_apex_always_has_mx(self):
+        mx = [w for w in self.apis.writes if w[0] != "fe-create" and "forwardemail" in w[-1] and "mx" in w[-1]]
+        self.assertEqual([w[0] for w in mx], ["edit", "edit"])
+        self.assertFalse([w for w in self.apis.writes if w[0] == "delete" and w[2].startswith("fwd")])
+
+    def test_a_duplicate_record_is_deleted_and_its_twin_stays(self):
+        dmarc = "v=DMARC1; p=reject; pct=100; rua=mailto:dmarc-abc@forwardemail.net;"
+        apis = FakeApis([{"name": "_dmarc", "type": "TXT", "content": dmarc}] * 2, fe_exists=True)
+        self.run_script(apis, "--apply")
+        self.assertEqual(apis.find("TXT", "_dmarc"), [dmarc])
+
+
+def another_mail_host():
+    """A new domain whose apex MX point at a mail host of the owner's, not at Porkbun's forwarding."""
+    zone = [r for r in porkbun_new_domain() if r["type"] != "MX"]
+    return zone + [{"name": "", "type": "MX", "content": "mx.example.net", "prio": 10}]
+
+
+class AnotherMailHost(Run):
+    """An apex MX that is not Forward Email's is kept and shown unless --force is passed."""
+
+    def test_without_force_the_other_mx_stay_and_are_shown(self):
+        apis = FakeApis(another_mail_host(), fe_exists=True)
+        code, out = self.run_script(apis, "--apply")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(apis.find("MX"), ["mx.example.net"])
+        self.assertIn("CONFLICT MX", out)
+        self.assertIn("another mail host; --force replaces it", out)
+
+    def test_without_force_the_apex_is_held_and_other_names_are_written(self):
+        apis = FakeApis(another_mail_host(), fe_exists=True)
+        self.run_script(apis, "--apply")
+        self.assertIn("v=spf1 include:_spf.porkbun.com ~all", apis.find("TXT"))
+        self.assertEqual(apis.find("ALIAS"), ["pixie.porkbun.com"])
+        self.assertEqual(apis.find("TXT", "fe-a1b2c3._domainkey"), [DKIM])
+
+    def test_a_dry_run_shows_the_other_mx(self):
+        apis = FakeApis(another_mail_host(), fe_exists=True)
+        code, out = self.run_script(apis)
+        self.assertEqual(code, 1)
+        self.assertIn("another mail host; --force replaces it", out)
+        self.assertEqual(apis.writes, [])
+
+    def test_porkbuns_forwarding_mx_are_no_mail_host_and_are_edited_in_place(self):
+        apis = FakeApis(porkbun_new_domain(), fe_exists=True)
+        code, out = self.run_script(apis, "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("another mail host", out)
+        self.assertEqual(apis.find("MX"), ["mx1.forwardemail.net", "mx2.forwardemail.net"])
+        self.assertEqual([w for w in apis.writes if w[0] == "delete" and str(w[-1]).startswith("fwd")], [])
+        self.assertEqual(len([w for w in apis.writes if w[0] == "edit" and w[2] == "MX"]), 2)
+
+    def test_forward_emails_own_mx_need_no_force(self):
+        mx = [{"name": "", "type": "MX", "content": f"mx{i}.forwardemail.net", "prio": 0} for i in (1, 2)]
+        apis = FakeApis(mx, fe_exists=True)
+        code, out = self.run_script(apis, "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("another mail host", out)
+
+    def test_forward_emails_own_mx_at_another_priority_are_edited_without_force(self):
+        mx = [{"name": "", "type": "MX", "content": f"mx{i}.forwardemail.net", "prio": 10} for i in (1, 2)]
+        apis = FakeApis(mx, fe_exists=True)
+        code, out = self.run_script(apis, "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("another mail host", out)
+        self.assertEqual(apis.find("MX"), ["mx1.forwardemail.net", "mx2.forwardemail.net"])
+
+
 class Conflicts(Run):
     def test_a_cname_wanted_where_another_type_exists_is_not_applied(self):
         apis = FakeApis(porkbun_new_domain() + [{"name": "autoconfig", "type": "A", "content": "1.2.3.4"}],
@@ -266,7 +348,8 @@ class Conflicts(Run):
         self.assertEqual(apis.find("A", "autoconfig"), ["1.2.3.4"])
 
     def test_two_spf_records_are_not_merged(self):
-        apis = FakeApis(porkbun_new_domain() + [{"name": "", "type": "TXT", "content": "v=spf1 mx -all"}],
+        apis = FakeApis(porkbun_new_domain() + [{"name": "", "type": "TXT", "content": "v=spf1 mx -all"},
+                                                {"name": "", "type": "TXT", "content": "v=spf1 a -all"}],
                         fe_exists=True)
         code, out = self.run_script(apis, "--apply")
         self.assertEqual(code, 1)
@@ -294,6 +377,16 @@ class Refusals(Run):
         self.assertEqual(code, 2)
         self.assertIn("API_ACCESS_DISABLED", out)
         self.assertEqual(apis.writes, [])
+
+
+class Accounts(Run):
+    def test_account_reads_its_own_porkbun_file_and_not_the_default(self):
+        self.write_account("acme", "pk1_acme")
+        self.files["porkbun"].unlink()
+        apis = FakeApis(porkbun_new_domain(), fe_exists=True)
+        code, out = self.run_script(apis, "--account", "acme")
+        self.assertEqual(code, 1, out)  # a dry run with changes pending
+        self.assertEqual(apis.keys, {"pk1_acme"})
 
 
 if __name__ == "__main__":

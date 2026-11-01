@@ -111,23 +111,62 @@ Tests: `python3 -m unittest test_display_sizing`.
 
 ## Domain email and website at Porkbun
 
-Two skills set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
+Three skills set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
 run that prints the plan and writes nothing; `--apply` writes, re-reads the zone and runs
 Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
-`~/.config/forwardemail/credentials`, mode 600, never in this repo.
+`~/.config/forwardemail/credentials`, mode 600, never in this repo. Another Porkbun account
+has its own file, `~/.config/porkbun/credentials.d/<name>`, which `--account <name>` picks.
 
-- `dot-claude/skills/enine-configure-domain-email-via-forwardemail/` adds the domain to
-  Forward Email and holds the zone to the records in Forward Email's own `zone_file`: other
-  MX replaced, SPF merged, DKIM, DMARC, return path, verification and autodiscovery set,
-  then Forward Email verifies.
-- `dot-claude/skills/enine-configure-domain-eninesites/` sets `ALIAS` records for the domain
-  and `www` to `eninesites.com`, or to the host `--to` names. It imports the Porkbun client
-  from the email skill's script, so the two directories ship together.
+- `dot-claude/skills/enine-porkbun-forwardemail/` adds the domain to Forward Email
+  and holds the zone to the records in Forward Email's own `zone_file`: another mail host's
+  MX kept and shown unless `--force` replaces them, SPF merged, DKIM, DMARC, return path,
+  verification and autodiscovery set, then Forward Email verifies.
+- `dot-claude/skills/enine-porkbun-fastmail/` sets Fastmail's three DKIM CNAMEs and adds its
+  include to SPF, so Fastmail sends as the domain; `--mx` also moves the apex MX to Fastmail.
+  Fastmail's API cannot add a domain, so the script prints the steps left at Fastmail.
+- `dot-claude/skills/enine-porkbun-eninesites/` sets `ALIAS` records for the domain and
+  `www` to `eninesites.com`, or to the host `--to` names.
 
-Both delete Porkbun's parking placeholders (records pointing at `pixie.porkbun.com`) and
-never touch NS records.
+All three import the Porkbun client from `dot-claude/skills/enine-porkbun/porkbun_client.py`, its
+one home, so `./install` ships them with the `enine-porkbun` directory.
 
-Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites`.
+All three delete Porkbun's placeholders, since nothing is to be parked or forwarded to Porkbun:
+records pointing at its parking page (`pixie.porkbun.com`, `uixie.porkbun.com`), MX to its email
+forwarders (`fwd1`, `fwd2.porkbun.com`) and an SPF record naming only `include:_spf.porkbun.com`.
+They never touch NS records. Each works out its records and writes them as create, update and
+delete requests through the client's one plan, which writes name by name, deletes first,
+and writes nothing at a name that holds a `CONFLICT`. A write Porkbun refuses stops only its
+own name; it is printed as `FAILED` with Porkbun's code, hint and request id, and the run
+exits 1. Every write carries an `Idempotency-Key`, so one that times out, hits the rate limit
+or a server error is resent up to three times without being written twice; a read that
+meets the same is resent the same way. A dry run also
+sends each create to Porkbun with `dryRun: true`, which checks it and writes nothing, and
+shows Porkbun's verdict on the row. A sandbox key (`pk1_sb_`) runs on Porkbun's test system;
+the run prints `SANDBOX:` and refuses any answer not marked sandbox.
+
+`dot-claude/skills/enine-porkbun/` (`/enine-porkbun`) writes one record from a prompt:
+`porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same
+arguments; `update --match v=spf1` edits only the record whose value starts with `v=spf1`.
+A name holds one SPF and one DMARC record (RFC 7208, RFC 7489), so `create` of an SPF record
+attaches it to the one there, its missing terms added and its `all` left as it is (`-all` when
+it has none), and
+`create` of a DMARC record where another is held is a `CONFLICT` that `update` replaces. `list` prints the account's domains, one row per name with its TLDs, and `domain`
+prints the records at a name and under it. `capture` copies the records a domain publishes
+at another DNS host into Porkbun's zone, from Porkbun's scan of its live nameservers, so
+moving the nameservers to Porkbun loses nothing. `history` lists the zone's restore points and
+`restore` puts one back, the undo for any of these skills; `check` runs Porkbun's preflight for
+a change made elsewhere, such as moving the nameservers or turning on DNSSEC. It finds the domain a name belongs to with
+Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight steps, and owns the
+client the other three import. `enine-porkbun-create`, `enine-porkbun-update`,
+`enine-porkbun-delete`, `enine-porkbun-list` and `enine-porkbun-domain` are the same skill
+with the verb fixed: each points at `enine-porkbun/PROCEDURE.md`, the one procedure all six
+follow.
+
+Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites
+test_configure_domain_fastmail test_porkbun`. `test_porkbun_sandbox` runs `porkbun.py` itself
+against Porkbun's sandbox, which changes nothing real, when
+`~/.config/porkbun/credentials.d/sandbox` holds a sandbox key pair (`pk1_sb_`) and the sandbox
+account holds a domain; otherwise it skips.
 
 ## Users on a hand-built host
 

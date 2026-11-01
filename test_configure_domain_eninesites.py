@@ -1,4 +1,4 @@
-"""Tests for dot-claude/skills/enine-configure-domain-eninesites. Run: python3 -m unittest test_configure_domain_eninesites
+"""Tests for dot-claude/skills/enine-porkbun-eninesites. Run: python3 -m unittest test_configure_domain_eninesites
 
 Lives at the repo root for the reason test_git_boundary.py gives: a top-level file never
 reaches ~/.claude. Uses the Porkbun fake from test_configure_domain_email and never touches
@@ -9,7 +9,7 @@ import unittest
 
 from test_configure_domain_email import D, FakeApis, Run, load, porkbun_new_domain
 
-ce = load("enine-configure-domain-eninesites", "configure_eninesites.py")
+ce = load("enine-porkbun-eninesites", "configure_eninesites.py")
 
 
 def web(apis, name):
@@ -36,10 +36,13 @@ class Eninesites(Run):
         self.assertEqual(web(apis, "www"), [("ALIAS", "eninesites.com")])
         self.assertNotIn("pixie.porkbun.com", [r["content"] for r in apis.records.values()])
 
-    def test_mail_and_ns_records_are_untouched(self):
-        apis = FakeApis(porkbun_new_domain())
-        self.run_script(apis, "--apply")
-        self.assertEqual(apis.find("MX"), ["fwd1.porkbun.com", "fwd2.porkbun.com"])
+    def test_porkbuns_forwarding_goes_and_other_mail_and_ns_records_stay(self):
+        apis = FakeApis(porkbun_new_domain() + [{"name": "mail", "type": "MX", "content": "mx.example.net", "prio": 10}])
+        code, out = self.run_script(apis, "--apply")
+        self.assertIn("Porkbun forwarding placeholder", out)
+        self.assertEqual(apis.find("MX"), [])
+        self.assertEqual(apis.find("MX", "mail"), ["mx.example.net"])
+        self.assertNotIn("v=spf1 include:_spf.porkbun.com ~all", apis.find("TXT"))
         self.assertIn("google-site-verification=keepme", apis.find("TXT"))
         self.assertEqual(apis.find("NS"), ["curitiba.porkbun.com", "salvador.porkbun.com"])
 
@@ -94,6 +97,13 @@ class Eninesites(Run):
         self.files["forwardemail"].unlink()
         code, out = self.run_script(FakeApis(porkbun_new_domain()), "--apply")
         self.assertEqual(code, 0, out)
+
+    def test_account_reads_its_own_porkbun_file(self):
+        self.write_account("acme", "pk1_acme")
+        apis = FakeApis(porkbun_new_domain())
+        code, out = self.run_script(apis, "--account", "acme", "--apply")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(apis.keys, {"pk1_acme"})
 
 
 if __name__ == "__main__":
