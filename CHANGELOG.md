@@ -5,6 +5,15 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.17.0 - 2026-11-07
+
+### Added
+- **`/enine-forwardemail`** (`forwardemail.py`) creates, updates and deletes Forward Email
+  domains and aliases, and reads them with `list` and `domain <domain>`. Values go in as
+  `--set K=V`, one API field each; an alias takes its recipients as arguments, which an
+  update puts in place of its list. A dry run by default; `--apply` writes and reads back.
+  `/enine-porkbun-forwardemail` uses its Forward Email client.
+
 ## 0.16.0 - 2026-11-07
 
 ### Added

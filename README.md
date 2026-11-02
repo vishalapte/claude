@@ -11,6 +11,7 @@ repo.
 |---|---|---|
 | [Settings and guardrails](#settings-and-guardrails) | Permissions, git hooks that refuse unsafe pushes and commits, auto-approval of safe compound commands | `dot-claude/settings.json`, `dot-claude/git-hooks/`, `dot-claude/hooks/` |
 | [Porkbun](#porkbun) | Create, update, delete and read DNS records; capture, undo and preflight a zone | `dot-claude/skills/enine-porkbun*/` |
+| [Forward Email](#forward-email) | Create, update, delete and read Forward Email domains and aliases | `dot-claude/skills/enine-forwardemail/` |
 | [Domain setups](#domain-setups) | One run sets a domain's DNS for Forward Email, Fastmail or a website host | `enine-porkbun-forwardemail/`, `-fastmail/`, `-eninesites/` |
 | [AWS SES](#aws-ses) | Configure an SES identity and print the records it needs | `dot-claude/skills/enine-aws-ses/` |
 | [Mail](#mail) | Search, resolve, file and pin stored mail; draft and send through SES; rank DMARC reports | `dot-claude/skills/enine-mail/`, `dot-claude/skills/enine-mail-dmarc/` |
@@ -161,6 +162,34 @@ A key starting `pk1_sb_` runs on Porkbun's test system instead of the live zones
 starts `SANDBOX:`, and any answer not marked sandbox is refused, so a sandbox key can never
 change a real zone.
 
+## Forward Email
+
+`/enine-forwardemail` (`forwardemail.py`) changes a domain's settings and its aliases at
+[Forward Email](https://forwardemail.net). It sets no DNS; `/enine-porkbun-forwardemail`
+(below) does that.
+
+### Verbs
+
+| Verb | Does |
+|---|---|
+| `create domain <domain>` / `create alias <name@domain> <recipient>...` | Adds it; `ok` when it exists with the values given, `CONFLICT` when it exists with others, which `update` changes |
+| `update domain <domain>` / `update alias <name@domain>` | Changes only the values given; an alias's recipients replace its list |
+| `delete domain <domain>` / `delete alias <name@domain>` | Removes it; the row says how many aliases a domain holds, or that an alias has a mailbox |
+| `list` | Every domain on the account, with its plan and whether its MX and TXT records check out |
+| `domain <domain>` | The domain's settings and every alias with its recipients |
+
+Values go in as `--set K=V`, one field of Forward Email's API each: `--set ignore_mx_check=true`
+keeps a domain's current mail host, `--set is_enabled=false` turns an alias off. A bare
+`forwardemail.py` lists every field. `*@example.com` is the catch-all alias. A field a read
+does not return, such as an alias's description, is sent and named in the row as not read back.
+
+### Credentials
+
+`~/.config/forwardemail/credentials`, mode 600, holding `FORWARDEMAIL_API_KEY=...`, the API
+token from your Forward Email account. The client, `forwardemail_client.py`, is the one the
+domain setup below uses too, so installing `enine-porkbun-forwardemail` needs this folder and
+`enine-porkbun` beside it.
+
 ## Domain setups
 
 Each of these works out a domain's records from the service that uses them and writes them
@@ -174,8 +203,7 @@ holds its DNS to the records in Forward Email's own zone file: MX, SPF (merged),
 path, DMARC, verification and autodiscovery. Another mail host's MX is kept and shown as a
 `CONFLICT`; `--force` replaces it. It ends with Forward Email's own verification.
 
-**Credentials:** `~/.config/forwardemail/credentials`, mode 600, holding
-`FORWARDEMAIL_API_KEY=...`, the API token from your Forward Email account.
+**Credentials:** the [Forward Email credentials](#credentials-1) and Porkbun's.
 
 ### Fastmail
 
@@ -401,6 +429,7 @@ user:
 | `test_git_boundary`, `test_compound_allow` | the push and commit hooks; the compound-command hook against every rule in `settings.json` |
 | `test_porkbun`, `test_configure_domain_email`, `test_configure_domain_fastmail`, `test_configure_domain_eninesites` | the Porkbun scripts, against a Porkbun fake |
 | `test_porkbun_sandbox` | `porkbun.py` itself on Porkbun's sandbox, when `~/.config/porkbun/credentials.d/sandbox` holds a `pk1_sb_` key; skipped otherwise |
+| `test_forwardemail` | `forwardemail.py`, against a fake Forward Email |
 | `test_aws_ses` | `ses_identity.py`, against a fake SES |
 | `test_mail`, `test_mail_search`, `test_mail_send` | the mail verbs, in a temporary store, with the `aws` call replaced |
 | `test_linux_create_user`, `test_display_sizing` | the host and desktop scripts |

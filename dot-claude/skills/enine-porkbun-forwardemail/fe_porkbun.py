@@ -14,7 +14,6 @@ Exit 0 conforms or was applied and verified, 1 something drifts or failed to ver
 """
 
 import argparse
-import base64
 import sys
 from pathlib import Path
 
@@ -23,62 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enine-porkbun")
 import porkbun_client as pc  # noqa: E402
 from porkbun_client import (  # noqa: E402
     PORKBUN_KEYS, TXT_STRING, Porkbun, Record, Refusal, Request,
-    message_of, normalize, to_sub, unquote_txt,
+    normalize, to_sub, unquote_txt,
 )
 
-FE_API = "https://api.forwardemail.net/v1"
-# Each service's keys live in that service's own file, as KEY=VALUE lines, mode 600. The
-# Porkbun file is the one --account picks (porkbun_client.porkbun_file), added at run time.
-FORWARDEMAIL_CREDENTIALS = Path.home() / ".config" / "forwardemail" / "credentials"
-CREDENTIALS = {
-    FORWARDEMAIL_CREDENTIALS: ("FORWARDEMAIL_API_KEY",),
-}
-
-
-# --- Forward Email --------------------------------------------------------------------
-
-
-class ForwardEmail:
-    def __init__(self, token):
-        basic = base64.b64encode(f"{token}:".encode()).decode()
-        self.headers = {"Authorization": f"Basic {basic}", "Accept": "application/json"}
-
-    def call(self, method, path, body=None):
-        status, parsed = pc.http(method, FE_API + path, self.headers, body)
-        if status == 401:
-            raise Refusal("Forward Email rejected FORWARDEMAIL_API_KEY (401)")
-        if status == 402:
-            raise Refusal(f"Forward Email's API needs a paid plan: {message_of(parsed)}")
-        return status, parsed
-
-    def domain(self, name):
-        """The domain object with its zone_file, or None when the account does not hold it."""
-        status, body = self.call("GET", f"/domains/{name}")
-        if status == 404:
-            return None
-        if status != 200:
-            raise Refusal(f"Forward Email GET /domains/{name} -> {status}: {message_of(body)}")
-        return body
-
-    def create(self, name, plan, catchall):
-        body = {"domain": name}
-        if plan:
-            body["plan"] = plan
-        if catchall is not None:
-            body["catchall"] = {"true": True, "false": False}.get(catchall.lower(), catchall)
-        status, response = self.call("POST", "/domains", body)
-        if status not in (200, 201):
-            raise Refusal(f"Forward Email POST /domains -> {status}: {message_of(response)}")
-        return response
-
-    def verify(self, name):
-        """(verified, message) from Forward Email's own lookup of the published records."""
-        status, body = self.call("GET", f"/domains/{name}/verify-records")
-        if 200 <= status < 300:
-            return True, message_of(body)
-        if status == 400:
-            return False, message_of(body)
-        raise Refusal(f"Forward Email verify-records -> {status}: {message_of(body)}")
+# The Forward Email client and its credentials have one home: the forwardemail skill.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "enine-forwardemail"))
+import forwardemail_client as fc  # noqa: E402
+from forwardemail_client import FE_API, CREDENTIALS, ForwardEmail  # noqa: E402,F401
 
 
 # --- records --------------------------------------------------------------------------
@@ -175,7 +125,10 @@ def run(args):
         if not args.apply:
             print(f"Forward Email: {domain} is not on the account; a run with --apply adds it.")
             return 1
-        info = fe.create(domain, args.plan, args.catchall)
+        settings = {"plan": args.plan} if args.plan else {}
+        if args.catchall is not None:
+            settings["catchall"] = fc.value_of("catchall", args.catchall)
+        info = fe.create_domain(domain, settings)
         print(f"Forward Email: added {domain} (plan {info.get('plan', '?')}).")
     else:
         print(f"Forward Email: {domain} is on the account (plan {info.get('plan', '?')}).")
