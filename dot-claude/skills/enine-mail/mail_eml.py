@@ -5,6 +5,7 @@ the mail root.
 """
 
 import html
+import json
 import re
 from email.header import decode_header, make_header
 from email.utils import parsedate_to_datetime
@@ -130,6 +131,52 @@ def body_text(msg):
         text = html_to_text(text)
     return text
 
+
+
+
+
+
+def _text_parts(part, depth=0):
+    """Every text/plain and text/html part under `part`, in order, as a dict each. `depth` counts
+    the attached messages (message/rfc822 parts) a part sits inside: 0 is the mail itself."""
+    if part.get_content_type() == "message/rfc822" or part.is_multipart():
+        inner = depth + 1 if part.get_content_type() == "message/rfc822" else depth
+        payload = part.get_payload()
+        children = payload if isinstance(payload, list) else []
+        return [found for child in children for found in _text_parts(child, inner)]
+    ctype = part.get_content_type()
+    if ctype not in ("text/plain", "text/html"):
+        return []
+    try:
+        content = part.get_content()
+    except Exception:  # pylint: disable=broad-exception-caught
+        content = _decode_part(part)  # an unknown charset: decode with replacement instead
+    return [{"type": ctype, "content": content, "attachment": part.is_attachment(),
+             "filename": part.get_filename(), "depth": depth}]
+
+def get_body(msg, type="text"):  # pylint: disable=redefined-builtin
+    """The message's body as a string: plain text (`type` "text"), HTML ("html"), or every
+    text part as a JSON list ("json").
+
+    "text" and "html" pick the body as email's own get_body does, which skips attachments, so
+    an attached .txt or .html file is never read as the body; "" when there is no body of that
+    type. "json" lists every text/plain and text/html part in order, attachments included and
+    marked, and the parts of an attached message (message/rfc822) with its depth:
+    [{"type", "content", "attachment", "filename", "depth"}], "[]" when there is none. `msg` is
+    from email.message_from_bytes(raw, policy=email.policy.default). delphi imports this by
+    name: keep the name and signature.
+    """
+    if type == "json":
+        return json.dumps(_text_parts(msg), ensure_ascii=False)
+    subtype = {"text": "plain", "html": "html"}.get(type)
+    if subtype is None:
+        raise ValueError(f'get_body type must be "text", "html" or "json", not {type!r}')
+    try:
+        part = msg.get_body(preferencelist=(subtype,))
+        return part.get_content() if part is not None else ""
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A malformed part or an unknown charset: no body of that type, never a crash.
+        return ""
 
 def account_dirs(root: Path, account):
     """Account dirs to scan under `root`: the named one, or every dir with archive/.

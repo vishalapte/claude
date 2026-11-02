@@ -10,6 +10,7 @@ environment had. Every address, name and message-id here is made up.
 
 import contextlib
 import email
+import email.policy
 import hashlib
 import io
 import json
@@ -562,6 +563,85 @@ class PinOffMacos(MailCase):
                 os.chflags = saved
         self.assertEqual(code, 2)
         self.assertIn("macOS user-immutable flag", err)
+
+
+class GetBody(unittest.TestCase):
+    """mail_eml.get_body: delphi imports it by name, on a message parsed with policy.default."""
+
+    def parse(self, raw):
+        return email.message_from_bytes(raw, policy=email.policy.default)
+
+    ALTERNATIVE = (b"From: alice@example.org\r\nTo: bob@example.net\r\nSubject: hi\r\nMIME-Version: 1.0\r\n"
+                   b'Content-Type: multipart/alternative; boundary="b"\r\n\r\n'
+                   b"--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nthe plain body\r\n"
+                   b"--b\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>the html body</p>\r\n--b--\r\n")
+
+    def test_text_is_the_plain_body_and_html_the_html_body(self):
+        msg = self.parse(self.ALTERNATIVE)
+        get_body = sys.modules["mail_eml"].get_body
+        self.assertEqual(get_body(msg).strip(), "the plain body")
+        self.assertEqual(get_body(msg, type="text").strip(), "the plain body")
+        self.assertEqual(get_body(msg, type="html").strip(), "<p>the html body</p>")
+
+    def test_an_attached_text_file_is_not_the_body(self):
+        raw = (b"From: alice@example.org\r\nSubject: hi\r\nMIME-Version: 1.0\r\n"
+               b'Content-Type: multipart/mixed; boundary="m"\r\n\r\n'
+               b'--m\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename="notes.txt"\r\n\r\n'
+               b"the attached file\r\n"
+               b"--m\r\nContent-Type: text/plain\r\n\r\nthe real body\r\n--m--\r\n")
+        self.assertEqual(sys.modules["mail_eml"].get_body(self.parse(raw)).strip(), "the real body")
+
+    def test_a_missing_type_is_an_empty_string(self):
+        raw = b"From: alice@example.org\r\nSubject: hi\r\nContent-Type: text/plain\r\n\r\nonly plain\r\n"
+        get_body = sys.modules["mail_eml"].get_body
+        self.assertEqual(get_body(self.parse(raw), type="html"), "")
+        self.assertEqual(get_body(self.parse(raw)).strip(), "only plain")
+
+    def test_json_lists_every_text_part_with_attachments_marked(self):
+        raw = (b"From: alice@example.org\r\nSubject: hi\r\nMIME-Version: 1.0\r\n"
+               b'Content-Type: multipart/mixed; boundary="m"\r\n\r\n'
+               b'--m\r\nContent-Type: multipart/alternative; boundary="a"\r\n\r\n'
+               b"--a\r\nContent-Type: text/plain\r\n\r\nthe plain body\r\n"
+               b"--a\r\nContent-Type: text/html\r\n\r\n<p>the html body</p>\r\n--a--\r\n"
+               b'--m\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename="notes.txt"\r\n\r\n'
+               b"the attached file\r\n"
+               b"--m\r\nContent-Type: image/png\r\nContent-Disposition: attachment; filename=\"x.png\"\r\n\r\nxx\r\n--m--\r\n")
+        parts = json.loads(sys.modules["mail_eml"].get_body(self.parse(raw), type="json"))
+        self.assertEqual([(p["type"], p["content"].strip(), p["attachment"], p["filename"], p["depth"]) for p in parts], [
+            ("text/plain", "the plain body", False, None, 0),
+            ("text/html", "<p>the html body</p>", False, None, 0),
+            ("text/plain", "the attached file", True, "notes.txt", 0),
+        ])
+
+    def test_json_reaches_into_an_attached_message_and_gives_its_depth(self):
+        inner = (b"From: shop@example.com\r\nSubject: Order 4512\r\nMIME-Version: 1.0\r\n"
+                 b'Content-Type: multipart/alternative; boundary="i"\r\n\r\n'
+                 b"--i\r\nContent-Type: text/plain\r\n\r\nYour order 4512\r\n"
+                 b"--i\r\nContent-Type: text/html\r\n\r\n<p>Your order 4512</p>\r\n--i--\r\n")
+        raw = (b"From: alice@example.org\r\nSubject: Fwd: Order\r\nMIME-Version: 1.0\r\n"
+               b'Content-Type: multipart/mixed; boundary="m"\r\n\r\n'
+               b"--m\r\nContent-Type: text/plain\r\n\r\nsee attached\r\n"
+               b'--m\r\nContent-Type: message/rfc822\r\nContent-Disposition: attachment; filename="order.eml"\r\n\r\n'
+               + inner + b"\r\n--m--\r\n")
+        msg = self.parse(raw)
+        parts = json.loads(sys.modules["mail_eml"].get_body(msg, type="json"))
+        self.assertEqual([(p["content"].strip(), p["depth"]) for p in parts],
+                         [("see attached", 0), ("Your order 4512", 1), ("<p>Your order 4512</p>", 1)])
+        self.assertEqual(sys.modules["mail_eml"].get_body(msg).strip(), "see attached")
+
+    def test_json_of_a_message_without_text_is_an_empty_list(self):
+        raw = b"From: alice@example.org\r\nSubject: hi\r\nContent-Type: image/png\r\n\r\nxx\r\n"
+        self.assertEqual(sys.modules["mail_eml"].get_body(self.parse(raw), type="json"), "[]")
+
+    def test_another_type_is_refused(self):
+        with self.assertRaises(ValueError):
+            sys.modules["mail_eml"].get_body(self.parse(self.ALTERNATIVE), type="plain")
+
+    def test_the_seven_names_delphi_imports_stay(self):
+        eml = sys.modules["mail_eml"]
+        for name in ("decode_hdr", "msg_date", "html_to_text", "_decode_part", "body_text", "account_dirs", "get_body"):
+            self.assertTrue(callable(getattr(eml, name)), name)
+        self.assertFalse(hasattr(eml, "body_parts"))
 
 
 class CommandLine(MailCase):

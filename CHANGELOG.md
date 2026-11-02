@@ -5,6 +5,15 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.14.0 - 2026-11-02
+
+### Added
+- **`mail_eml.get_body(msg, type="text")`** returns a message's body as plain text, or as HTML
+  with `type="html"`, picked as email's own `get_body` picks it, attachments skipped; `""` when
+  there is none. `type="json"` returns every text part as a JSON list of
+  `{"type", "content", "attachment", "filename", "depth"}`; `depth` counts the attached
+  messages a part sits in. A test keeps `mail_eml`'s reading functions importable by name.
+
 ## 0.13.0 - 2026-11-01
 
 ### Added
