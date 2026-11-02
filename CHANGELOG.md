@@ -5,6 +5,12 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+### Changed
+- **The README** describes each area in its own section: install, settings and
+  guardrails, DNS at Porkbun, the domain setups, AWS SES, mail, hosts and desktops,
+  commands and tests. Each service names where its credentials live, and mail names its
+  environment variables, store layout, owner-address file and sender config.
+
 ## 0.14.0 - 2026-11-02
 
 ### Added

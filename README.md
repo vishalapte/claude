@@ -1,244 +1,372 @@
 # claude
 
-User-level Claude Code configuration: permissions, auto-mode policy, UI preferences, and
-generic commands. Nothing repo-specific lives here; a repo that needs hooks, skills or
-commands ships them as its own Claude Code plugin.
+A Claude Code configuration, installed into `~/.claude`: the settings and guardrails every
+session runs under, and a set of skills that do real work, such as managing DNS at Porkbun,
+setting a domain up for AWS SES, and searching, filing and sending mail.
+
+Everything that installs lives under `dot-claude/`. The tests and this README stay in the
+repo.
+
+| Area | What it does | Where |
+|---|---|---|
+| [Settings and guardrails](#settings-and-guardrails) | Permissions, git hooks that refuse unsafe pushes and commits, auto-approval of safe compound commands | `dot-claude/settings.json`, `dot-claude/git-hooks/`, `dot-claude/hooks/` |
+| [Porkbun](#porkbun) | Create, update, delete and read DNS records; capture, undo and preflight a zone | `dot-claude/skills/enine-porkbun*/` |
+| [Domain setups](#domain-setups) | One run sets a domain's DNS for Forward Email, Fastmail or a website host | `enine-porkbun-forwardemail/`, `-fastmail/`, `-eninesites/` |
+| [AWS SES](#aws-ses) | Configure an SES identity and print the records it needs | `dot-claude/skills/enine-aws-ses/` |
+| [Mail](#mail) | Search, resolve, file and pin stored mail; draft and send through SES | `dot-claude/skills/enine-mail/` |
+| [Hosts and desktops](#hosts-and-desktops) | Create Linux accounts over SSH; size an Omarchy desktop's display | `linux-create-user/`, `omarchy-display-sizing/` |
+| [Commands](#commands) | `/lint` and `/review` | `dot-claude/commands/` |
+
+## How the tools behave
+
+Every script that changes something follows the same rules, so one habit covers them all:
+
+- **A dry run by default.** Without `--apply` a script reads, prints exactly what it would
+  change, and writes nothing. Each skill shows those rows and asks before it applies them.
+- **Rows you can read.** `ok` already as asked, `CREATE`, `EDIT` (with the old value),
+  `DELETE`, `CONFLICT` (cannot be applied, with the reason), `FAILED` (refused by the service).
+- **Exit codes.** `0` done or nothing to do; `1` changes pending, a conflict, or something
+  wrong found; `2` refused, such as a bad argument or a missing credential.
+- **Credentials stay out of the repo.** Each section's **Credentials** names the file a tool
+  reads. A key file holds `KEY=VALUE` lines and must be mode 600; a tool refuses one that
+  others can read, and no tool prints a key.
 
 ## Install
 
-**From a checkout**, which installs what is in it, unpushed changes included:
+### From a checkout
 
     ./install            # --dry-run lists what would be replaced
 
-It replaces each file under `dot-claude/` in `~/.claude`, saving the previous `settings.json`
-and `CLAUDE.md` in `~/.claude/backups/` first.
+It installs what is in the checkout, unpushed changes included. It copies every file under
+`dot-claude/` into `~/.claude`, first saving the current `settings.json` and `CLAUDE.md` in
+`~/.claude/backups/`.
 
-**Without a clone**, one command. Pick the form that matches the repo's visibility.
-
-**Private** (the default for this repo). `gh` supplies the auth:
-
-    gh api repos/vishalapte/claude/tarball/main \
-      | tar -xz -C ~/.claude --strip-components=2
-
-**Public**:
+### Without a clone
 
     curl -fsSL https://github.com/vishalapte/claude/archive/refs/heads/main.tar.gz \
       | tar -xz -C ~/.claude --strip-components=2
 
-**Then run `./install` in each repo that installs into Claude** (racecar, and any other
-repo that ships an install). The download replaces `settings.json`, which removes the hooks
-those installs wrote, and nothing tells you: the hooks that would notice are the ones that
-were removed. The install is safe to re-run.
+`--strip-components=2` drops the archive's top directory and `dot-claude/`, so a top-level
+file such as this README strips to nothing and is skipped. The same command works with GNU
+tar and macOS bsdtar. It holds only while `dot-claude/` is the one directory at the top of
+the repo; a second one would be extracted into `~/.claude` too.
 
-Both overwrite only the files under `dot-claude/`. Credentials, history, projects and
-memory in `~/.claude` are never touched, and file modes are kept, so
-`statusline-command.sh` stays executable.
+### What an install replaces
 
-## Private org list
+Both ways replace `settings.json` whole. Any other repo that writes into it, such as
+racecar, must run its own `./install` again afterwards; those installs are safe to re-run.
+Credentials, history, projects and memory in `~/.claude` are never touched, and file modes
+are kept, so `statusline-command.sh` stays executable.
 
-A git `pre-push` hook in `dot-claude/git-hooks/` refuses any push whose GitHub owner is not
-listed in `~/.claude/orgs.json`. That file is private and never in this repo; copy
-`orgs.example.json` there and put your own owners in it. With no file, or a malformed one,
-every push is refused: the absence of the config protects rather than exposes.
+## Settings and guardrails
 
-The same hook refuses any push that deletes a remote ref. git marks a deletion with an
-all-zero sha however it was typed (`:branch`, `--delete`, `-d`), so the hook catches every
-spelling, where a `settings.json` rule matches only the text it names. A rule for the
-`:branch` form also cannot be written without Claude Code warning about it on every start.
+`settings.json` holds the permissions (what runs, what asks, what is denied), the auto-mode
+policy, the status line and UI preferences.
 
-`settings.json` points git at the hooks through `env` (`GIT_CONFIG_*` setting
-`core.hooksPath`), so it applies only to commands Claude Code runs, never to your terminal.
-Git hands the hook the real destination URL however the push was started (an alias, a
-script, `bash -c`), so nothing parses shell commands. Every other hook name is a symlink to
-`_dispatch`, which runs the repo's own hook, so pre-commit and the rest keep working.
-Skipping or redirecting hooks (`--no-verify`, `core.hooksPath`, `GIT_CONFIG_*`) is denied.
+### Git hooks
 
-`gh` has no hook point. Public gists, public repo creation and visibility changes are denied
-in `settings.json`; other `gh` writes fall to the ask rules and the auto-mode classifier.
+The hooks apply only to commands Claude Code runs, never to your own terminal:
+`settings.json` points git at them through `env` (`GIT_CONFIG_*` setting `core.hooksPath`).
+Every hook name other than `pre-push` and `commit-msg` is a symlink to `_dispatch`, which runs
+the repo's own hook, so pre-commit and the rest keep working.
 
-Tests: `python3 -m unittest test_git_boundary`.
+### Pushes
 
-## Commits and main
+- A push goes only to a GitHub owner listed in `~/.claude/orgs.json`. That file is private
+  and never in this repo; copy `orgs.example.json` there and list your owners. With no file,
+  or a malformed one, every push is refused.
+- A push that deletes a remote ref is refused, however it is spelled (`:branch`, `--delete`,
+  `-d`): git marks every deletion the same way.
+- Skipping or redirecting hooks (`--no-verify`, `core.hooksPath`, `GIT_CONFIG_*`) is denied.
+- `gh` has no hook point: public gists, public repo creation and visibility changes are
+  denied in `settings.json`; other `gh` writes ask.
 
-The `commit-msg` hook refuses three things in a commit Claude Code makes, in any repo:
+### Commits
 
-- a merge commit. git runs the hook for the commit a merge makes, conflicted or not, and
-  for `--no-ff`; a squash merge passes.
-- a `Co-Authored-By: Claude` or `Claude-Session:` trailer. `attribution` in `settings.json`
-  stops Claude Code writing them, and its line in PR descriptions; the hook catches one written by hand.
-- a `Bump version to X.Y.Z.` line that is not the last line of the message.
+- In any repo, a commit Claude Code makes is refused when it is a merge commit, carries a
+  `Co-Authored-By: Claude` or `Claude-Session:` trailer, or has a `Bump version to X.Y.Z.`
+  line that is not the message's last line.
+- `git commit -n` is denied like `--no-verify`.
+- `pull.ff=only` makes a pull that cannot fast-forward fail instead of merging.
+- Commands that move a branch (merge, reset, rebase, cherry-pick, revert, `branch -f` and the
+  like) ask first; `gh pr merge` is denied.
 
-`git commit -n` skips the hook, so it is denied like `--no-verify`. `pull.ff=only` makes a
-pull that cannot fast-forward fail instead of merging; a pull that can fast-forward runs.
-Commands that move a branch (merge, reset, rebase, `pull --rebase`, cherry-pick, revert, am,
-update-ref, `branch -f`/`-M`, `checkout -B`, `switch -C`, a forced fetch) ask first. A
-plain fetch into a branch is fast-forward only, so it runs. `gh pr merge` is denied:
-it moves main on GitHub.
+### Compound commands
 
-## Auto-approving compound commands
+Claude Code asks before `a && b` or `a | b` even when each part is allowed.
+`hooks/compound-command-allow.py` approves such a command when every part matches an `allow`
+rule and none matches an `ask` or `deny` rule; otherwise it stays silent and Claude Code
+decides as usual. It never approves a part it cannot see, such as `$(...)`.
 
-Claude Code asks before running a compound command (`a && b`, `a | b`) even when each part
-is allowed on its own. `dot-claude/hooks/compound-command-allow.py` approves it when every
-part matches an `allow` rule and no part matches an `ask` or `deny` rule. Otherwise it prints
-nothing, and Claude Code decides as it would without the hook.
+### Plan mode
 
-Tests: `python3 -m unittest test_compound_allow`. The test reads the rules in
-`dot-claude/settings.json`, turns each rule into a command that matches it, and checks what
-the hook does with that command. It also checks commands the hook must never approve
-whatever the rules say, such as one containing `$(...)`, which runs a second command no rule
-was checked against.
+`ExitPlanMode` is denied, so plan mode shows each plan as text and stops; leave it with
+shift+tab.
 
-## Plan mode without the proceed prompt
+## Porkbun
 
-`ExitPlanMode` is denied in `settings.json`, so Claude Code removes the tool and Claude
-cannot ask "Claude has written up a plan and is ready to execute. Would you like to
-proceed?". A plan made over many prompts is shown as text each time; you leave plan mode
-with shift+tab when it is ready. A hook that refuses the call would show a "hook error"
-line each time instead; the deny rule shows nothing.
+`/enine-porkbun` drives one script, `skills/enine-porkbun/porkbun.py`. With no arguments it
+prints its help. `/enine-porkbun-create`, `-update`, `-delete`, `-list` and `-domain` are the
+same skill with the verb fixed; all follow `skills/enine-porkbun/PROCEDURE.md`.
 
-## Sizing an Omarchy display
+### Verbs
 
-`dot-claude/skills/omarchy-display-sizing/` holds an Omarchy desktop's display sizes to one
-set of targets, for a fleet of 27" iMacs: monitor scale, bar icons and height, the GTK
-interface font (which Chrome's tabs use), the GTK text factor and Ghostty's font. Its script
-derives the scale from the panel's physical width, so a 2560x1440 iMac gets 1.0 and a
-3840x2160 one gets 1.25, and sets each size with its own control. `--check` audits and
-changes nothing. It runs over SSH as the logged-in desktop user, without Claude:
+| Verb | Does |
+|---|---|
+| `create <TYPE> <name> <target>` | adds the record; `ok` when the same value is there |
+| `update <TYPE> <name> <target> [--match P]` | edits the one record of that type at the name, or the one whose value starts with `P` |
+| `delete <TYPE> <name> [target \| --all]` | removes the record holding `target`; with none, the one record of the type; several need `--all` |
+| `list` | the account's domains, one row per name with its TLDs |
+| `domain <name> [--type T]` | the records at a name and under it |
+| `capture <domain>` | copies the records a domain's live nameservers publish into Porkbun's zone, before the nameservers move |
+| `history <domain>` / `restore <domain> <point>` | the zone's restore points, and putting one back (`--prune` also deletes what was added since) |
+| `check <domain> --intent I` | Porkbun's preflight for `move-nameservers`, `transfer-out` or `enable-dnssec` |
 
-    ssh imac01 python3 .claude/skills/omarchy-display-sizing/display_sizing.py --check
+### What every write guarantees
 
-Tests: `python3 -m unittest test_display_sizing`.
+- **One SPF and one DMARC record per name** (RFC 7208, RFC 7489). `create` of an SPF record
+  attaches it to the one there: missing terms are added, the record's `all` stays as set, and
+  a record without one gets `-all`. `create` of a DMARC record where another exists is a
+  `CONFLICT` that `update --match v=DMARC1` replaces.
+- **A CNAME stands alone at its name** (RFC 1034), and an `ALIAS` below the apex counts as one.
+- **Porkbun's placeholders are removed**: records pointing at its parking page
+  (`pixie.porkbun.com`, `uixie.porkbun.com`), MX to its email forwarders (`fwd1`,
+  `fwd2.porkbun.com`) and an SPF record naming only `include:_spf.porkbun.com`. NS records are
+  never touched.
+- **A refused write stops only its own name**, printed as `FAILED` with Porkbun's code, hint,
+  the records in the way and the request id. Writes run name by name, deletes first.
+- **Safe retries.** Every write carries an `Idempotency-Key`, and a write or read that meets a
+  rate limit, a server error or no answer is resent up to three times.
+- **Porkbun checks the dry run too.** Each planned create is sent with `dryRun: true` and
+  Porkbun's verdict is shown on the row.
 
-## Domain email and website at Porkbun
+### Credentials
 
-Three skills set a Porkbun domain's DNS from the services that use it. Each defaults to a dry
-run that prints the plan and writes nothing; `--apply` writes, re-reads the zone and runs
-Porkbun's preflight. Keys live in `~/.config/porkbun/credentials` and
-`~/.config/forwardemail/credentials`, mode 600, never in this repo. Another Porkbun account
-has its own file, `~/.config/porkbun/credentials.d/<name>`, which `--account <name>` picks.
+| Account | File | Keys |
+|---|---|---|
+| the default | `~/.config/porkbun/credentials` | `PORKBUN_API_KEY`, `PORKBUN_SECRET_API_KEY` |
+| any other, chosen with `--account NAME` | `~/.config/porkbun/credentials.d/NAME` | the same two |
 
-- `dot-claude/skills/enine-porkbun-forwardemail/` adds the domain to Forward Email
-  and holds the zone to the records in Forward Email's own `zone_file`: another mail host's
-  MX kept and shown unless `--force` replaces them, SPF merged, DKIM, DMARC, return path,
-  verification and autodiscovery set, then Forward Email verifies.
-- `dot-claude/skills/enine-porkbun-fastmail/` sets Fastmail's three DKIM CNAMEs and adds its
-  include to SPF, so Fastmail sends as the domain; `--mx` also moves the apex MX to Fastmail.
-  Fastmail's API cannot add a domain, so the script prints the steps left at Fastmail.
-- `dot-claude/skills/enine-porkbun-eninesites/` sets `ALIAS` records for the domain and
-  `www` to `eninesites.com`, or to the host `--to` names.
+    mkdir -p ~/.config/porkbun
+    printf 'PORKBUN_API_KEY=pk1_...\nPORKBUN_SECRET_API_KEY=sk1_...\n' > ~/.config/porkbun/credentials
+    chmod 600 ~/.config/porkbun/credentials
 
-All three import the Porkbun client from `dot-claude/skills/enine-porkbun/porkbun_client.py`, its
-one home, so `./install` ships them with the `enine-porkbun` directory.
+Every skill that writes Porkbun records reads these files: the ones above, the domain setups
+and `enine-aws-ses`'s printed commands. Porkbun also needs API access turned on for each
+domain (porkbun.com > Domain Management); a run without it says so and names the domain.
 
-All three delete Porkbun's placeholders, since nothing is to be parked or forwarded to Porkbun:
-records pointing at its parking page (`pixie.porkbun.com`, `uixie.porkbun.com`), MX to its email
-forwarders (`fwd1`, `fwd2.porkbun.com`) and an SPF record naming only `include:_spf.porkbun.com`.
-They never touch NS records. Each works out its records and writes them as create, update and
-delete requests through the client's one plan, which writes name by name, deletes first,
-and writes nothing at a name that holds a `CONFLICT`. A write Porkbun refuses stops only its
-own name; it is printed as `FAILED` with Porkbun's code, hint and request id, and the run
-exits 1. Every write carries an `Idempotency-Key`, so one that times out, hits the rate limit
-or a server error is resent up to three times without being written twice; a read that
-meets the same is resent the same way. A dry run also
-sends each create to Porkbun with `dryRun: true`, which checks it and writes nothing, and
-shows Porkbun's verdict on the row. A sandbox key (`pk1_sb_`) runs on Porkbun's test system;
-the run prints `SANDBOX:` and refuses any answer not marked sandbox.
+### Sandbox
 
-`dot-claude/skills/enine-porkbun/` (`/enine-porkbun`) writes one record from a prompt:
-`porkbun.py create A auth.example.com 192.0.2.1`, or `update` or `delete` with the same
-arguments; `update --match v=spf1` edits only the record whose value starts with `v=spf1`.
-A name holds one SPF and one DMARC record (RFC 7208, RFC 7489), so `create` of an SPF record
-attaches it to the one there, its missing terms added and its `all` left as it is (`-all` when
-it has none), and
-`create` of a DMARC record where another is held is a `CONFLICT` that `update` replaces. `list` prints the account's domains, one row per name with its TLDs, and `domain`
-prints the records at a name and under it. `capture` copies the records a domain publishes
-at another DNS host into Porkbun's zone, from Porkbun's scan of its live nameservers, so
-moving the nameservers to Porkbun loses nothing. `history` lists the zone's restore points and
-`restore` puts one back, the undo for any of these skills; `check` runs Porkbun's preflight for
-a change made elsewhere, such as moving the nameservers or turning on DNSSEC. It finds the domain a name belongs to with
-Porkbun's `/domain/listAll`, uses the same dry-run, `--apply` and preflight steps, and owns the
-client the other three import. `enine-porkbun-create`, `enine-porkbun-update`,
-`enine-porkbun-delete`, `enine-porkbun-list` and `enine-porkbun-domain` are the same skill
-with the verb fixed: each points at `enine-porkbun/PROCEDURE.md`, the one procedure all six
-follow.
+A key starting `pk1_sb_` runs on Porkbun's test system instead of the live zones. The output
+starts `SANDBOX:`, and any answer not marked sandbox is refused, so a sandbox key can never
+change a real zone.
 
-`dot-claude/skills/enine-aws-ses/` (`/enine-aws-ses`) sets a domain up to send through AWS SES.
-`ses_identity.py` creates the SES identity or brings it to 2048-bit Easy DKIM and MAIL FROM
-`hermes.<domain>`, when `--profile` names an AWS profile that may change SES there; otherwise it
-says the SES half was skipped. It then prints the six `porkbun.py create` commands (three DKIM
-CNAMEs, the MAIL FROM MX and SPF, DMARC), which the skill runs as dry runs and applies on the
-owner's yes. Region and MAIL FROM come from the sender config (`--senders FILE` or
-`ENINE_MAIL_SENDERS`, no default) when it lists the domain, and `--sender-profile` adds the
-domain there.
+## Domain setups
 
-Tests: `python3 -m unittest test_configure_domain_email test_configure_domain_eninesites
-test_configure_domain_fastmail test_porkbun test_aws_ses`. `test_porkbun_sandbox` runs `porkbun.py` itself
-against Porkbun's sandbox, which changes nothing real, when
-`~/.config/porkbun/credentials.d/sandbox` holds a sandbox key pair (`pk1_sb_`) and the sandbox
-account holds a domain; otherwise it skips.
+Each of these works out a domain's records from the service that uses them and writes them
+through the same Porkbun client, with the same dry run and guarantees. All three read the
+[Porkbun credentials](#credentials) and take `--account NAME`.
+
+### Forward Email
+
+`/enine-porkbun-forwardemail` (`fe_porkbun.py <domain>`) adds the domain to Forward Email and
+holds its DNS to the records in Forward Email's own zone file: MX, SPF (merged), DKIM, return
+path, DMARC, verification and autodiscovery. Another mail host's MX is kept and shown as a
+`CONFLICT`; `--force` replaces it. It ends with Forward Email's own verification.
+
+**Credentials:** `~/.config/forwardemail/credentials`, mode 600, holding
+`FORWARDEMAIL_API_KEY=...`, the API token from your Forward Email account.
+
+### Fastmail
+
+`/enine-porkbun-fastmail` (`fm_porkbun.py <domain>`) sets Fastmail's three DKIM CNAMEs and its
+include in the SPF record, so Fastmail can send as the domain; `--mx` also moves the apex MX
+to Fastmail. It prints the steps left at Fastmail.
+
+**Credentials:** none for Fastmail. Its API cannot add a domain, so the script never calls it.
+
+### eninesites
+
+`/enine-porkbun-eninesites` (`configure_eninesites.py <domain>`) points the domain and `www`
+at `eninesites.com` with `ALIAS` records, or at the host `--to` names.
+
+**Credentials:** Porkbun only.
+
+## AWS SES
+
+`/enine-aws-ses` (`skills/enine-aws-ses/ses_identity.py <domain>`) sets a domain up to send
+through SES.
+
+### What it sets
+
+1. **At SES**: it creates the domain's identity, or sets it to 2048-bit Easy DKIM and MAIL
+   FROM `hermes.<domain>`. Without `--profile` it says the SES half was skipped.
+2. **At Porkbun**: it prints the six records SES needs (three DKIM CNAMEs, the MAIL FROM MX and
+   SPF, DMARC with `p=reject`) as `porkbun.py create` commands, which the skill dry-runs and
+   applies on approval.
+
+### Region and MAIL FROM
+
+They come from the domain's entry in the [sender config](#sender-config), else `us-east-1`
+and `hermes`; `--region` and `--mail-from` override them. `--sender-profile NAME` adds the
+domain to the sender config with that AWS profile.
+
+### Credentials
+
+| For | Where |
+|---|---|
+| SES | an AWS CLI profile in `~/.aws/config` and `~/.aws/credentials`, passed as `--profile NAME`; it must be allowed to read and change SES identities in the domain's account |
+| the records | the [Porkbun credentials](#credentials) |
+
+The two halves never share a credential, so each runs without the other's.
 
 ## Mail
 
-`dot-claude/skills/enine-mail/` (`/enine-mail`) works a mail store, such as the one delphi and
-the wicket harvest share, and sends mail through AWS SES. `mail.py` is
-stdlib only, ported from delphi's `mail` noun:
+`/enine-mail` drives `skills/enine-mail/mail.py`, which works a mail store on disk and sends
+through SES. It is standard-library Python only.
 
-- `search` finds stored mail by `--from --to --cc --bcc --subject --after --before`, or a
-  Gmail-style `--query`, newest first; `resolve <message-id>` prints the stored `.eml`. Both
-  only read. A search term matches whole words, as in Gmail: `oci` finds "OCI card" but not
-  "Social". `alice@example.com` and `example.org` still find mail to or from them, since `@` and
-  `.` separate words, and `art*` is a prefix that finds "Arts". The flags and `--query` share
-  Gmail's grammar: words side by side are ANDed, `or` and `and` in any case combine them, `-word`
-  excludes, and quotes make a phrase or the literal word "or"; `--from X` is `from:(X)`.
-- `ingest <file.eml>...` files a tracked `.eml` byte for byte on the harvest's layout,
-  `<account>/archive/<counterparty-domain>/<YYYY-MM>/<sha1(message-key)[:16]>.eml`; it moves the
-  file, or keeps it with `--copy`.
-- `pin <message-id>...` locks each id's stored `.eml` with the macOS user-immutable flag, so
-  nothing can delete it; `--check` exits 1 when one is unlocked or missing, and
-  `--unpin <message-id>...` is the only unlock. delphi supplies the ids.
-- `draft` builds draft N, the exact bytes SES will get, and shows it; with no arguments it
-  lists the drafts and the mail sent.
-- `send N` shows draft N as it will go, and `send N --apply` sends it through
-  `aws sesv2 send-email`. `send` with message arguments drafts first and shows the draft.
-  `--apply` takes only a draft number, so what goes out is the draft that was shown. The
-  draft is marked `sending` before SES is called, so a retry cannot send it twice.
+### Verbs
 
-`ingest`, `pin` and `send` are dry runs without `--apply`, and the skill asks the owner before
-it applies one.
+| Verb | Does | Writes |
+|---|---|---|
+| `search` | finds stored mail by `--from --to --cc --bcc --subject --after --before`, or a Gmail-style `--query`, newest first | nothing |
+| `resolve <message-id>` | prints the stored `.eml` for a Message-ID | nothing |
+| `ingest <file.eml>...` | moves a `.eml` into the store byte for byte (`--copy` keeps the source); `exists` when it is already stored under any name | with `--apply` |
+| `pin <message-id>...` | locks each stored `.eml` with the macOS immutable flag; `--check` reports unlocked ones, `--unpin` unlocks | with `--apply` |
+| `draft` | builds draft N, the exact bytes SES will send, and shows it; with no arguments, lists drafts and sent mail | a draft only |
+| `send N` | shows draft N as it will go; `send N --apply` sends it through `aws sesv2 send-email` | with `--apply` |
 
-The skill holds no path and no sender: the repo or person that uses it supplies five paths,
-each by a flag or an environment variable, the flag winning. None has a default, and a verb
-that needs one that is not given refuses and names both.
+### Search
 
-| Path | Flag | Variable | Needed by |
+A term matches whole words, as in Gmail: `oci` finds "OCI card" but not "Social", and `art*`
+is a prefix. An address or domain still matches whole, since `@` and `.` separate words. The
+flags and `--query` share one grammar: words side by side are ANDed, `or` and `and` in any
+case combine them, `-word` excludes, quotes make a phrase, and `--from X` is `from:(X)`.
+
+### Sending
+
+`send N --apply` takes only a draft number, so what goes out is the draft that was shown. The
+draft is marked `sending` before SES is called, so a retry cannot send it twice, and each send
+adds one line to the sent log. The From header, display name included, is delivered as
+drafted; SES sets the Date.
+
+### Environment variables
+
+The skill holds no path and no sender. Each of five paths comes from a flag or an environment
+variable, the flag winning. None has a default: a verb that needs one that is not given
+refuses and names both.
+
+| Variable | Flag | Holds | Needed by |
 |---|---|---|---|
-| the mail store | `--store DIR` | `ENINE_MAIL_STORE` | `search`, `resolve`, `ingest`, `pin`; a reply's threading |
-| the owner-address file | `--identity FILE` | `ENINE_MAIL_IDENTITY` | `ingest`, to tell sent mail from received |
-| the sender config | `--senders FILE` | `ENINE_MAIL_SENDERS` | building a draft: per domain the SES profile, region, Bcc, Reply-To and sender name |
-| the drafts folder | `--drafts DIR` | `ENINE_MAIL_DRAFTS` | `draft`, `send` |
-| the sent log | `--sent FILE` | `ENINE_MAIL_SENT` | `draft` with no arguments, `send N --apply`; a reply's threading |
+| `ENINE_MAIL_STORE` | `--store DIR` | the mail store | `search`, `resolve`, `ingest`, `pin`; a reply's threading |
+| `ENINE_MAIL_IDENTITY` | `--identity FILE` | the owner-address file | `ingest`, to tell sent mail from received |
+| `ENINE_MAIL_SENDERS` | `--senders FILE` | the sender config | `draft` and `send` with message arguments; `enine-aws-ses` |
+| `ENINE_MAIL_DRAFTS` | `--drafts DIR` | the drafts folder | `draft`, `send` |
+| `ENINE_MAIL_SENT` | `--sent FILE` | the sent log, one JSON line per send | listing drafts, `send N --apply`; a reply's threading |
 
-Tests: `python3 -m unittest test_mail test_mail_search test_mail_send`. They remove any
-`ENINE_MAIL_*` variable from the environment, set the five to a temp dir, and replace the `aws`
-call, so they read no mail, config or credentials and send nothing.
+Set them in `env` in `~/.claude/settings.json`, so every Claude session finds them:
 
-## Users on a hand-built host
+    "env": {
+      "ENINE_MAIL_STORE": "/Users/alice/mail",
+      "ENINE_MAIL_IDENTITY": "/Users/alice/mail/identity.json",
+      "ENINE_MAIL_SENDERS": "/Users/alice/.config/mail/senders.toml",
+      "ENINE_MAIL_DRAFTS": "/Users/alice/.local/share/mail/drafts",
+      "ENINE_MAIL_SENT": "/Users/alice/.local/share/mail/sent.jsonl"
+    }
 
-`dot-claude/skills/linux-create-user/` (`/linux-create-user`) creates one account on a remote
-host over `ssh <host> sudo -n bash -s`, the way a hand-built host's history made them. The
-uid decides the kind: 1000 and above is a person (bash, `/home/<name>`, optional sudo with a
-`NOPASSWD` drop-in, SSH keys from `github.com/<id>.keys`), below 1000 a service account
-(system, nologin, `/var/lib/<name>`, gid equal to uid, optional GitHub deploy key with a
-`Host <key>.github.com` alias). It reads the host, prints the plan, and writes only with
-`--apply`, then reads the host again to verify. It never renumbers an account and only adds.
-A host under racecar's Ansible rail gets its accounts from the `machine` role instead.
+An install of this repo replaces `settings.json` whole, so the repo that uses the skill writes
+these in its own install.
 
-Tests: `python3 -m unittest test_linux_create_user`.
+### The store
 
-## Why the install needs no filter
+    <store>/<account>/archive/<counterparty-domain>/<YYYY-MM>/<hash>.eml
+    <store>/<account>/manifest/<YYYY>.jsonl        optional, one JSON line per message
 
-`--strip-components=2` drops the archive's top directory and `dot-claude/`. A top-level
-file such as this README strips to nothing and is skipped, so no member filter is needed,
-and the same command works with GNU tar and macOS bsdtar. That holds only while
-`dot-claude/` is the one directory at the top of the repo: a second one would be
-extracted into `~/.claude` too.
+When an account has a manifest, keyed by Message-ID, `resolve`, `pin` and subject searches
+answer from it instead of opening every file.
+
+### The owner-address file
+
+JSON listing your own addresses, matched exactly and never by domain:
+
+    {"owner_addresses": ["alice@example.com", "alice@example.org"]}
+
+### Sender config
+
+TOML, one entry per domain you send from. A setting missing from the entry comes from
+`[defaults]`, and `{domain}` is replaced with the sending domain. `profile` has no default.
+
+    [defaults]
+    region = "us-east-1"
+    name = "Alice Example"
+    bcc = "alice@example.com"
+
+    [domains."example.com"]
+    profile = "ses-example"        # the AWS profile that sends
+    mail_from = "hermes"           # read by enine-aws-ses
+    reply_to = "alice@{domain}"
+
+A domain not listed, or marked `deprecated = true`, is refused.
+
+### Credentials
+
+`send` calls `aws sesv2 send-email` with the domain's `profile` and `region` from the sender
+config. That profile lives in `~/.aws/config` and `~/.aws/credentials` and must be allowed to
+send email through SES in the domain's account. Nothing else in the skill needs a credential.
+
+### As a library
+
+`skills/enine-mail/mail_eml.py` reads `.eml` files for other programs: `decode_hdr`,
+`msg_date`, `html_to_text`, `body_text`, `account_dirs` and `get_body(msg, type="text")`,
+which returns a message's body as plain text, as HTML with `type="html"`, or every text part
+as a JSON list with `type="json"` (`{"type", "content", "attachment", "filename", "depth"}`,
+where `depth` counts the attached messages a part sits in).
+
+## Hosts and desktops
+
+### Linux users
+
+`/linux-create-user` (`create_user.py [login@]host name`) creates one account on a remote host
+over `ssh <host> sudo -n bash -s`. A uid of 1000 or more is a person (bash, `/home/<name>`,
+optional sudo, SSH keys from `github.com/<id>.keys`); below 1000 a service account (nologin,
+`/var/lib/<name>`, optional GitHub deploy key). It reads the host, prints the plan, writes only
+with `--apply`, and reads the host again to verify. It never renumbers an account.
+
+**Access:** your SSH config and keys reach the host, and the login account has passwordless
+sudo there (`sudo -n`). A host key ssh cannot find under any name is refused, with its fingerprint
+and the command that trusts it once.
+
+### Omarchy display sizing
+
+`/omarchy-display-sizing` (`display_sizing.py`) holds an Omarchy desktop's display sizes to
+one set of targets for 27" iMacs: monitor scale, bar, GTK font and text factor, and Ghostty's
+font. It derives the scale from the panel's physical width, so a 2560x1440 panel gets 1.0 and
+a 3840x2160 one 1.25. `--check` audits and changes nothing. It runs over SSH as the desktop
+user:
+
+    ssh imac01 python3 .claude/skills/omarchy-display-sizing/display_sizing.py --check
+
+**Access:** SSH as the desktop user; it changes only that user's settings.
+
+## Commands
+
+- **`/lint`** runs pylint and black in audit mode, reports the findings, and asks before
+  fixing anything.
+- **`/review`** reviews code for bugs, flaws and quality issues and runs benchmarks. It is
+  read-only.
+
+## Tests
+
+    python3 -m unittest discover -p 'test_*.py'
+
+| Tests | Cover |
+|---|---|
+| `test_git_boundary`, `test_compound_allow` | the push and commit hooks; the compound-command hook against every rule in `settings.json` |
+| `test_porkbun`, `test_configure_domain_email`, `test_configure_domain_fastmail`, `test_configure_domain_eninesites` | the Porkbun scripts, against a Porkbun fake |
+| `test_porkbun_sandbox` | `porkbun.py` itself on Porkbun's sandbox, when `~/.config/porkbun/credentials.d/sandbox` holds a `pk1_sb_` key; skipped otherwise |
+| `test_aws_ses` | `ses_identity.py`, against a fake SES |
+| `test_mail`, `test_mail_search`, `test_mail_send` | the mail verbs, in a temporary store, with the `aws` call replaced |
+| `test_linux_create_user`, `test_display_sizing` | the host and desktop scripts |
+
+No test reads your mail, configuration or credentials, or sends anything. Every address in
+them is a placeholder (`example.com`, `alice`, `192.0.2.x`).
