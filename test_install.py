@@ -5,6 +5,7 @@ Every run installs into a temporary CLAUDE_CONFIG_DIR, so ~/.claude is never tou
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -67,6 +68,27 @@ class Install(unittest.TestCase):
         result = self.run_install("--agent", "alice", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.dest.exists())
+
+    def test_a_pycache_directory_is_not_installed(self):
+        repo = self.dest.parent / "repo"
+        skill = repo / "dot-claude" / "skills" / "demo"
+        (skill / "__pycache__").mkdir(parents=True)
+        shutil.copy(ROOT / "install", repo)
+        (repo / "dot-claude" / "settings.json").write_text("{}\n")
+        (skill / "demo.py").write_text("")
+        (skill / "__pycache__" / "demo.pyc").write_text("")
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=str(self.dest))
+
+        def run(*args):
+            return subprocess.run([str(repo / "install"), "--agent", "alice", *args], env=env,
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  check=False)
+
+        self.assertNotIn("__pycache__", run("--dry-run").stdout)
+        self.assertEqual(run().returncode, 0)
+        self.assertTrue((self.dest / "skills" / "demo" / "demo.py").exists())
+        self.assertFalse((self.dest / "skills" / "demo" / "__pycache__").exists())
+        self.assertIn("already matches", run().stdout)
 
 
 if __name__ == "__main__":

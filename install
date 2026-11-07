@@ -9,7 +9,8 @@
 # orgs.json, a repo's RACECAR.md) are never touched. The two files that are replaced whole
 # are copied to ~/.claude/backups/<timestamp>/ first.
 #
-# Installs what is in this checkout, including uncommitted and unpushed changes. The
+# Installs what is in this checkout, including uncommitted and unpushed changes, but never a
+# __pycache__ directory, which only records that tests ran here. The
 # download in README.md installs GitHub's main instead.
 #
 # settings.json ships with <agent> in its paths; the installed copy has the agent's name there.
@@ -69,7 +70,7 @@ while IFS= read -r -d '' f; do
     elif ! cmp -s "$f" "$DEST/$rel"; then
         changed+=("$rel")
     fi
-done < <(find "$SRC" \( -type f -o -type l \) -print0 | sort -z)
+done < <(find "$SRC" -name __pycache__ -prune -o \( -type f -o -type l \) -print0 | sort -z)
 
 if [ "${#changed[@]}" -eq 0 ]; then
     echo "install: $DEST already matches $SRC"
@@ -89,7 +90,7 @@ done
 echo "install: previous settings.json and CLAUDE.md saved in $backup"
 
 mkdir -p "$DEST"
-tar -C "$SRC" -cf - . | tar -xf - -C "$DEST"
+tar -C "$SRC" --exclude=__pycache__ -cf - . | tar -xf - -C "$DEST"
 render_settings > "$DEST/settings.json"
 
 [ -r "$DEST/orgs.json" ] || echo "install: $DEST/orgs.json is missing, so every push Claude runs will be refused; copy orgs.example.json there and list your owners" >&2

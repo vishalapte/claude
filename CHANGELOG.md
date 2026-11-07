@@ -5,6 +5,12 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.18.1 - 2026-11-07
+
+### Fixed
+- **`./install` skips `__pycache__`**, so a test run in the checkout no longer adds bytecode
+  to `~/.claude` or to the dry run's list.
+
 ## 0.18.0 - 2026-11-07
 
 ### Added
