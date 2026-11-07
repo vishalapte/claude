@@ -36,11 +36,15 @@ Every script that changes something follows the same rules, so one habit covers 
 
 ### From a checkout
 
-    ./install            # --dry-run lists what would be replaced
+    ./install --agent alice    # --dry-run lists what would be replaced
 
 It installs what is in the checkout, unpushed changes included. It copies every file under
 `dot-claude/` into `~/.claude`, first saving the current `settings.json` and `CLAUDE.md` in
 `~/.claude/backups/`.
+
+`settings.json` ships with `<agent>` in its paths, and the installed copy has the agent's name
+there. Without `--agent`, it asks at a terminal and refuses anywhere else. A name is lowercase
+letters, digits, `-` and `_`.
 
 ### Without a clone
 
@@ -50,7 +54,8 @@ It installs what is in the checkout, unpushed changes included. It copies every 
 `--strip-components=2` drops the archive's top directory and `dot-claude/`, so a top-level
 file such as this README strips to nothing and is skipped. The same command works with GNU
 tar and macOS bsdtar. It holds only while `dot-claude/` is the one directory at the top of
-the repo; a second one would be extracted into `~/.claude` too.
+the repo; a second one would be extracted into `~/.claude` too. It leaves `<agent>` in
+`settings.json`, so change that by hand.
 
 ### What an install replaces
 
@@ -329,18 +334,16 @@ refuses and names both.
 | `ENINE_MAIL_DRAFTS` | `--drafts DIR` | the drafts folder | `draft`, `send` |
 | `ENINE_MAIL_SENT` | `--sent FILE` | the sent log, one JSON line per send | listing drafts, `send N --apply`; a reply's threading |
 
-Set them in `env` in `~/.claude/settings.json`, so every Claude session finds them:
+`dot-claude/settings.json` sets them in `env`, so every Claude session finds them, and
+`./install --agent NAME` puts the agent's name in place of `<agent>`:
 
     "env": {
-      "ENINE_MAIL_STORE": "/Users/alice/mail",
-      "ENINE_MAIL_IDENTITY": "/Users/alice/mail/identity.json",
-      "ENINE_MAIL_SENDERS": "/Users/alice/.config/mail/senders.toml",
-      "ENINE_MAIL_DRAFTS": "/Users/alice/.local/share/mail/drafts",
-      "ENINE_MAIL_SENT": "/Users/alice/.local/share/mail/sent.jsonl"
+      "ENINE_MAIL_STORE": "~/.data/mail",
+      "ENINE_MAIL_IDENTITY": "~/.config/<agent>/identity.json",
+      "ENINE_MAIL_SENDERS": "~/.config/<agent>/senders.toml",
+      "ENINE_MAIL_DRAFTS": "~/.local/share/<agent>/drafts",
+      "ENINE_MAIL_SENT": "~/.local/share/<agent>/sent.jsonl"
     }
-
-An install of this repo replaces `settings.json` whole, so the repo that uses the skill writes
-these in its own install.
 
 ### The store
 

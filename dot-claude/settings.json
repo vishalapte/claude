@@ -177,7 +177,12 @@
     "GIT_CONFIG_KEY_0": "core.hooksPath",
     "GIT_CONFIG_VALUE_0": "~/.claude/git-hooks",
     "GIT_CONFIG_KEY_1": "pull.ff",
-    "GIT_CONFIG_VALUE_1": "only"
+    "GIT_CONFIG_VALUE_1": "only",
+    "ENINE_MAIL_STORE": "~/.data/mail",
+    "ENINE_MAIL_IDENTITY": "~/.config/<agent>/identity.json",
+    "ENINE_MAIL_SENDERS": "~/.config/<agent>/senders.toml",
+    "ENINE_MAIL_DRAFTS": "~/.local/share/<agent>/drafts",
+    "ENINE_MAIL_SENT": "~/.local/share/<agent>/sent.jsonl"
   },
   "hooks": {
     "PreToolUse": [

@@ -5,6 +5,13 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.18.0 - 2026-11-07
+
+### Added
+- **`./install --agent NAME`** puts the agent's name in place of `<agent>` in `settings.json`,
+  which now sets the `ENINE_MAIL_*` paths. Without `--agent`, it asks at a terminal and refuses
+  anywhere else, so `./install` alone in a script now exits 2.
+
 ## 0.17.0 - 2026-11-07
 
 ### Added
