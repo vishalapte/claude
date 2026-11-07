@@ -13,6 +13,7 @@ Usage
                 [--attach FILE] [--in-reply-to MSGID]
   mail.py send N [--apply]
   mail.py send --from A --to A --subject S --body FILE [...]
+  mail.py dmarc [--domain D] [--after D] [--before D] [--days N] [--account MAILBOX]
 Every verb takes --json, which prints the result as JSON instead of text, and the path flags
 below that it uses, before or after the verb.
 
@@ -33,6 +34,8 @@ Examples
   mail.py draft 3                                                draft 3 as it will go
   mail.py send 3                                                 draft 3 as it will go; sends nothing
   mail.py send 3 --apply                                         send draft 3 through SES
+  mail.py dmarc                                                  every DMARC report: threats first
+  mail.py dmarc --domain example.org --after 2026-01-01          one domain's reports since January
 
 Verbs
   search   find stored mail by header flags or a Gmail-style --query, newest first; read-only.
@@ -51,11 +54,16 @@ Verbs
   send     with N, show draft N as it will go; with N --apply, send it through SES. With message
            args and no N, run draft first, then show the new draft. --apply takes only a draft
            number, so what goes out is the draft that was shown
+  dmarc    read the DMARC reports in the store, screened by header (aggregate XML zipped, gzipped
+           or bare; RFC 6591 failure reports), and rank them: threats (senders that failed
+           DMARC, recent and delivered first), holes (p=none, pct below 100, sp=none, senders
+           passing on SPF alone, domains whose reports stopped), then statistics; read-only
 
 Exit
   0  done, nothing to do, or printed
   1  changes pending (a dry run), or something wrong found: nothing matched, a message-id not
-     in the store, an unlocked or dangling pin, a file skipped
+     in the store, an unlocked or dangling pin, a file skipped, a recent DMARC threat or a
+     high-severity DMARC hole
   2  refused: a bad argument, a path not given, a missing sender config, a missing draft, an
      SES refusal
 
@@ -71,7 +79,7 @@ that needs one that is not given refuses and names both.
   --sent FILE       ENINE_MAIL_SENT      the sent log, one JSON line per message sent
 
 Which verb needs which
-  search, resolve, pin           --store
+  search, resolve, pin, dmarc    --store
   ingest                         --store --identity
   draft (no args)                --drafts --sent
   draft N, send N                --drafts
@@ -88,6 +96,7 @@ from pathlib import Path
 
 # The store, search and send code have one home each, beside this script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mail_dmarc  # noqa: E402
 import mail_paths  # noqa: E402
 import mail_search  # noqa: E402
 import mail_send  # noqa: E402
@@ -359,6 +368,100 @@ def print_send(result):
         print(f"\nDry run: nothing sent. Send draft {d['number']} with: {COMMAND} send {d['number']} --apply")
 
 
+# --- dmarc ------------------------------------------------------------------------------
+
+
+def dmarc(args, paths):
+    store = paths.need("dmarc", "store").store
+    result = mail_dmarc.dmarc(store=store, account=args.account, domain=args.domain,
+                              after=args.after, before=args.before, days=args.days)
+    return result, 1 if mail_dmarc.alarming(result) else 0
+
+
+def _table(header, rows, right=()):
+    """A monospace table: columns as wide as their widest cell, numbers right-aligned, a dash
+    rule under the header."""
+    cells = [header] + [[str(c) for c in row] for row in rows]
+    widths = [max(len(row[i]) for row in cells) for i in range(len(header))]
+
+    def line(row):
+        return "  ".join(c.rjust(w) if i in right else c.ljust(w)
+                         for i, (c, w) in enumerate(zip(row, widths))).rstrip()
+
+    print(line(header))
+    print("-" * len(line(["-" * w for w in widths])))
+    for row in cells[1:]:
+        print(line(row))
+
+
+def _pct(part, whole):
+    return f"{100 * part / whole:.0f}%" if whole else "-"
+
+
+def print_dmarc(result):
+    total = result["stats"]["total"]
+    span = f"{total['first']} to {total['last']}" if total["reports"] else "none"
+    print(f"DMARC: {total['reports']} aggregate reports ({span}), {total['messages']} messages, "
+          f"{total['failing']} failed DMARC ({_pct(total['failing'], total['messages'])}); "
+          f"{len(result['failure_reports'])} failure reports. Recent means {result['recent_since']} or later "
+          f"(--days {result['recent_days']}).")
+    print()
+    print("THREATS: senders that failed DMARC, recent and worst first")
+    if result["threats"]:
+        _table(["Sev", "Recent", "Domain", "Source IP", "Msgs", "Delivered", "Blocked", "First", "Last",
+                "Passed elsewhere", "DKIM/SPF domain", "Reported by"],
+               [[t["severity"], "yes" if t["recent"] else "no", t["domain"], t["source_ip"], t["messages"],
+                 t["delivered"], t["quarantined"] + t["rejected"], t["first"], t["last"],
+                 "yes" if t["seen_passing"] else "no", ", ".join(t["senders"]), ", ".join(t["reporters"])]
+                for t in result["threats"]], right=(4, 5, 6))
+    else:
+        print("none")
+    print()
+    print("FAILURE REPORTS: one message each, from the ruf address")
+    if result["failure_reports"]:
+        _table(["Recent", "Date", "Domain", "Source IP", "Failed", "Delivery", "Reported by"],
+               [["yes" if f["recent"] else "no", f["date"], f["domain"], f["source_ip"],
+                 f["auth_failure"], f["delivery"], f["reporter"]] for f in result["failure_reports"]])
+    else:
+        print("none")
+    print()
+    print("HOLES: what each domain publishes, and senders whose pass is fragile")
+    if result["holes"]:
+        _table(["Sev", "Domain", "Issue", "Detail"],
+               [[h["severity"], h["domain"], h["kind"], h["detail"]] for h in result["holes"]])
+    else:
+        print("none")
+    stats = result["stats"]
+    print()
+    print("BY DOMAIN")
+    _table(["Domain", "Policy", "Last report", "Reports", "Msgs", "Failed", "Pass"],
+           [[d["domain"], d["p"], d["last"], d["reports"], d["messages"], d["failing"],
+             _pct(d["messages"] - d["failing"], d["messages"])] for d in stats["domains"]], right=(3, 4, 5, 6))
+    print()
+    print("BY REPORTER")
+    _table(["Reporter", "Reports", "Msgs", "Failed"],
+           [[r["reporter"], r["reports"], r["messages"], r["failing"]] for r in stats["reporters"]],
+           right=(1, 2, 3))
+    print()
+    months = stats["months"][-12:]
+    print(f"BY MONTH (the last {len(months)} with reports; --json has all {len(stats['months'])})")
+    _table(["Month", "Reports", "Msgs", "Failed"],
+           [[m["month"], m["reports"], m["messages"], m["failing"]] for m in months], right=(1, 2, 3))
+    print()
+    senders = stats["senders"][:10]
+    print(f"TOP SENDERS (by messages; {len(senders)} of {len(stats['senders'])})")
+    _table(["Domain", "DKIM/SPF domain", "Msgs", "Failed"],
+           [[s["domain"], s["sender"], s["messages"], s["failing"]] for s in senders], right=(2, 3))
+    if result["other_dmarc_mail"]:
+        print()
+        print("OTHER DMARC MAIL: names DMARC but holds no report; read it yourself")
+        _table(["Date", "From", "Subject"],
+               [[o["date"], o["from"], o["subject"]] for o in result["other_dmarc_mail"]])
+    print()
+    print(f"{result['scanned']} .eml scanned, {result['candidates']} read in full, "
+          f"{result['unparseable']} unparseable, {result['duplicates']} duplicate reports skipped.")
+
+
 # --- the command line -------------------------------------------------------------------
 
 SEARCH_DESCRIPTION = (
@@ -393,6 +496,17 @@ def _search_args(p):
                    help="show the newest N matches (default 50); the count covers all")
 
 
+def _dmarc_args(p):
+    p.add_argument("--domain", action="append", metavar="DOMAIN",
+                   help="only reports for this published domain (repeatable; default every one)")
+    p.add_argument("--after", metavar="DATE", help="reports covering DATE or later (UTC); YYYY-MM-DD")
+    p.add_argument("--before", metavar="DATE", help="reports covering days strictly before DATE (UTC); YYYY-MM-DD")
+    p.add_argument("--days", type=int, default=mail_dmarc.RECENT_DAYS, metavar="N",
+                   help=f"a failure in the last N days is recent (default {mail_dmarc.RECENT_DAYS})")
+    p.add_argument("--account", action="append", metavar="MAILBOX",
+                   help="read only this mailbox directory (repeatable; default every one)")
+
+
 def _message_args(p):
     p.add_argument("--from", dest="sender", metavar="ADDR",
                    help="the address to send as; its domain must be in the sender config")
@@ -415,6 +529,7 @@ VERB_PATHS = {
     "pin": ("store",),
     "draft": ("senders", "drafts", "sent", "store"),
     "send": ("senders", "drafts", "sent", "store"),
+    "dmarc": ("store",),
 }
 
 VERBS = {
@@ -424,6 +539,7 @@ VERBS = {
     "pin": (pin, print_pin),
     "draft": (draft, print_draft),
     "send": (send, print_send),
+    "dmarc": (dmarc, print_dmarc),
 }
 
 
@@ -453,6 +569,7 @@ def parser():
     send_parser.add_argument("number", metavar="N", type=int, nargs="?", help="the draft number to send")
     _message_args(send_parser)
     send_parser.add_argument("--apply", action="store_true", help="send draft N through SES (without it, show it)")
+    _dmarc_args(verbs.add_parser("dmarc", help="read and rank every DMARC report in the store; read-only"))
     for verb, verb_parser in verbs.choices.items():
         verb_parser.add_argument("--json", action="store_true", help="print the result as JSON")
         mail_paths.add_flags(verb_parser, VERB_PATHS[verb], suppress=True)

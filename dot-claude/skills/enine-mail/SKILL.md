@@ -3,8 +3,8 @@ name: enine-mail
 description: >
   A mail store and outgoing mail: search stored mail by header or a Gmail-style query,
   resolve a message-id to its stored .eml, file a tracked .eml into the store, pin the .eml of
-  given message-ids so nothing can delete them, draft a message, and send a draft through AWS
-  SES, from a prompt such as "/enine-mail search --from alice@example.com",
+  given message-ids so nothing can delete them, draft a message, send a draft through AWS
+  SES, and read and rank every DMARC report in the store, from a prompt such as "/enine-mail search --from alice@example.com",
   "/enine-mail draft" or "/enine-mail send 3". A bare /enine-mail shows the help and asks for
   the verb. Writes dry-run first, and nothing is sent until the owner approves the draft
   number that was shown. Every path comes from the consumer (a flag or an ENINE_MAIL_*
@@ -26,6 +26,7 @@ arguments it prints its help, with examples.
 | `pin <message-id>...` | locks each id's stored .eml immutable; `--check` reports any unlocked or missing; `--unpin <id>...` unlocks | with `--apply` |
 | `draft` | with message args, builds draft N, the exact bytes SES will get, and shows it; with none, lists drafts and sent lines; with N, shows draft N | a draft, never a send |
 | `send N` | shows draft N as it will go; `send N --apply` sends it through SES | with `--apply` |
+| `dmarc` | reads every DMARC report in the store and ranks threats, then holes, then statistics; `--domain --after --before --days` | nothing |
 
 ## Paths come from the consumer
 
@@ -34,7 +35,7 @@ each one, and the skill uses only what it is given.
 
 | Path | Flag | Variable | Used by |
 |---|---|---|---|
-| the mail store | `--store DIR` | `ENINE_MAIL_STORE` | `search`, `resolve`, `ingest`, `pin`; a reply's threading |
+| the mail store | `--store DIR` | `ENINE_MAIL_STORE` | `search`, `resolve`, `ingest`, `pin`, `dmarc`; a reply's threading |
 | the owner-address file | `--identity FILE` | `ENINE_MAIL_IDENTITY` | `ingest` |
 | the sender config | `--senders FILE` | `ENINE_MAIL_SENDERS` | building a draft |
 | the drafts folder | `--drafts DIR` | `ENINE_MAIL_DRAFTS` | `draft`, `send` |
@@ -52,10 +53,11 @@ them. A path guessed wrong reads or writes someone else's mail, so a missing one
 
 1. IF the prompt gives no arguments, THEN run `mail.py` and show its output as the help.
 2. IF the prompt names no verb, THEN ask with AskUserQuestion: `search`, `draft`, `send`, `resolve`.
-3. Say in that question that Other takes `ingest` or `pin`.
+3. Say in that question that Other takes `ingest`, `pin` or `dmarc`.
 4. Do not mark any option "(Recommended)".
 
-**Why:** AskUserQuestion holds four options, so the two verbs the owner uses least go under Other.
+**Why:** AskUserQuestion holds four options, so the verbs the owner uses least go under Other.
+`/enine-mail-dmarc` names `dmarc` itself.
 
 ## Read: search, resolve
 
@@ -73,6 +75,30 @@ them. A path guessed wrong reads or writes someone else's mail, so a missing one
 the owner wants. An address or a domain is a run of words joined by `@` and `.`, so it still
 matches whole. A flag is its field's query (`--from X` is `from:(X)`), so the flags and
 `--query` share one set of rules.
+
+## Read: dmarc
+
+1. Run `mail.py dmarc`, passing `--domain`, `--after`, `--before` or `--days` only where the prompt names them.
+2. Read the whole output before writing anything; it takes about a minute on a large store.
+3. Lead with the verdict: the count of recent threats and high holes, or "nothing recent, no high holes".
+4. Report threats first, recent ones before old, as the output ranks them.
+5. For each threat, give the domain, source IP, messages, delivered or blocked, and last date.
+6. Then report every failure report, then every hole with its severity and detail.
+7. Then give the statistics in at most five lines: totals, the busiest domains and reporters.
+8. IF the output lists OTHER DMARC MAIL, THEN name those messages; the verb reads no summary email.
+9. IF a hole is a published policy, THEN say it is as of the report date, not today's DNS.
+10. IF the owner asks to fix a hole, THEN read the live record with `/enine-porkbun-domain` first.
+11. Change nothing yourself: the verb is read-only, and a DNS change is the owner's.
+12. IF the exit code is 2, THEN report the refusal message; do not work around it.
+
+**Why:** a message is screened by its subject, sender and content type, not by the address it came
+to, so a report those headers do not mark is not read. A threat is a sender that failed DMARC while using the domain: "high" when
+a receiver delivered it, "medium" when every message was quarantined or rejected, "low" when
+the same IP also passed (a legitimate sender failing some of the time, such as a forward).
+A hole whose newest evidence is over 60 days old is not reported, nor is a sender whose newest
+passing mail passed DKIM: a report describes its own day, and the hole may be fixed since.
+Exit 1 means a recent medium or high threat, a recent failure report, or a high hole; exit 0
+means none of these.
 
 ## Write: ingest, pin
 
@@ -123,7 +149,7 @@ a retry after a crash cannot send it twice; the owner checks for its Bcc copy fi
 ## Exit and files
 
 Exit 0 done, nothing to do, or printed; 1 a dry run with changes pending, nothing matched, an
-id not in the store, or an unlocked or dangling pin; 2 refused.
+id not in the store, an unlocked or dangling pin, or a recent DMARC threat or high hole; 2 refused.
 
 - Every path is the consumer's, as the table under "Paths come from the consumer" says.
 - The sender config holds the SES profiles. Never print, echo or paste it.

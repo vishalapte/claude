@@ -5,6 +5,17 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.16.0 - 2026-11-07
+
+### Added
+- **`mail.py dmarc` and `/enine-mail-dmarc`** read every DMARC report in the mail store and
+  rank them: threats (sources that failed DMARC, recent and delivered first), RFC 6591 failure
+  reports, holes (`p=none`, `pct` below 100, `sp=none`, senders passing on SPF alone, domains
+  whose reports stopped; only with recent evidence), then statistics by domain, reporter, month
+  and sender. Reports are screened by header, not by address, since a domain's `rua` address
+  changes over time; a zip is read as a zip even when labelled gzip, as Mimecast labels it.
+  Read-only; exit 1 on a recent threat or a high hole.
+
 ## 0.15.0 - 2026-11-07
 
 ### Changed

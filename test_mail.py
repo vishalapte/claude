@@ -1,5 +1,5 @@
 """Tests for dot-claude/skills/enine-mail: the store, ingest, resolve, pin and the command line.
-Run: python3 -m unittest test_mail test_mail_search test_mail_send
+Run: python3 -m unittest test_mail test_mail_search test_mail_send test_mail_dmarc
 
 Lives at the repo root for the reason test_git_boundary.py gives: a top-level file never
 reaches ~/.claude. The scripts hold no path: every path they read or write (the mail store,
@@ -30,7 +30,7 @@ store = sys.modules["mail_store"]
 search_module = sys.modules["mail_search"]
 send_module = sys.modules["mail_send"]
 paths_module = sys.modules["mail_paths"]
-MODULES = (mail, store, search_module, send_module, sys.modules["mail_eml"], paths_module)
+MODULES = (mail, store, search_module, send_module, sys.modules["mail_eml"], paths_module, sys.modules["mail_dmarc"])
 
 OWNER = "owner@example.com"
 MSGID = "test-0001@mail.example.com"
