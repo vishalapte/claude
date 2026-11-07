@@ -5,11 +5,31 @@ All notable changes to this configuration are recorded here, in the style of
 
 ## [Unreleased]
 
+## 0.15.0 - 2026-11-07
+
 ### Changed
+- **`/enine-aws-ses` reads the Porkbun zone before it prints anything, and confirms a domain
+  already set up.** Each record SES needs (the DKIM CNAMEs as one set, the MAIL FROM MX and
+  SPF, DMARC) gets one row: `CONFIRM` when the zone holds it as provided, `CREATE` when it is
+  absent, `PROMPT` when it differs, `ERROR` when it is absent and nothing provides it. Without
+  DKIM tokens, the three the zone holds in AWS form are confirmed; all rows `CONFIRM` print
+  `CONFIRMED: <domain>`. A `PROMPT` defaults to doing nothing; its update deletes the zone's
+  record and creates the provided one, so a record is no longer merged or added beside one that
+  differs. The skill no longer looks for old DKIM records.
+- **`ses_identity.py --apply` adds a domain the sender config does not list**, with `mail_from`,
+  `# sends_for = []`, and the profile line commented out, holding the profile most listed
+  domains use. With no sender config set, or no file at its path, nothing is added; a listed
+  domain is flagged and its entry is never changed. The skill adds the domain this way after it
+  creates records.
 - **The README** describes each area in its own section: install, settings and
   guardrails, DNS at Porkbun, the domain setups, AWS SES, mail, hosts and desktops,
   commands and tests. Each service names where its credentials live, and mail names its
   environment variables, store layout, owner-address file and sender config.
+
+### Removed
+- **`ses_identity.py --mx`, `--spf` and `--sender-profile`.** SES takes bounces only at
+  `feedback-smtp.<region>.amazonses.com` and needs `include:amazonses.com` at the MAIL FROM
+  name, so neither had another valid value; the sender config's profile line is edited there.
 
 ## 0.14.0 - 2026-11-02
 

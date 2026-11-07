@@ -195,30 +195,45 @@ at `eninesites.com` with `ALIAS` records, or at the host `--to` names.
 ## AWS SES
 
 `/enine-aws-ses` (`skills/enine-aws-ses/ses_identity.py <domain>`) sets a domain up to send
-through SES.
+through SES, or confirms that it already is.
 
 ### What it sets
 
 1. **At SES**: it creates the domain's identity, or sets it to 2048-bit Easy DKIM and MAIL
    FROM `hermes.<domain>`. Without `--profile` it says the SES half was skipped.
-2. **At Porkbun**: it prints the six records SES needs (three DKIM CNAMEs, the MAIL FROM MX and
-   SPF, DMARC with `p=reject`) as `porkbun.py create` commands, which the skill dry-runs and
-   applies on approval.
+2. **At Porkbun**: it reads the zone first, then gives each record SES needs one row: the three
+   DKIM CNAMEs (one row), the MAIL FROM MX, the MAIL FROM SPF, and DMARC with `p=reject`.
+
+   | in the zone | provided | row |
+   |---|---|---|
+   | no | yes | `CREATE`: its `porkbun.py create` command prints |
+   | no | no | `ERROR` |
+   | yes | matches | `CONFIRM` |
+   | yes | differs | `PROMPT`: the update prints, delete the zone's and create the provided |
+
+   With no DKIM tokens given, the DKIM row confirms the three the zone holds in AWS form. When
+   every row is `CONFIRM` it prints `CONFIRMED: <domain>`. The script writes nothing at Porkbun;
+   the skill runs the printed commands on approval, and a `PROMPT` row defaults to doing nothing.
 
 ### Region and MAIL FROM
 
 They come from the domain's entry in the [sender config](#sender-config), else `us-east-1`
-and `hermes`; `--region` and `--mail-from` override them. `--sender-profile NAME` adds the
-domain to the sender config with that AWS profile.
+and `hermes`; `--region` and `--mail-from` override them. A domain the sender config does not
+list gets an entry there, shown in a dry run and appended on `--apply`: `mail_from`, `region` when
+it is not the default, `# sends_for = []`, and the profile line commented out, holding the profile
+most listed domains use. With no
+sender config set, or no file at its path, nothing is added (the file is never created), and a domain already listed is flagged; its entry is never
+changed. After it creates records, the skill adds the domain this way without asking.
 
 ### Credentials
 
 | For | Where |
 |---|---|
 | SES | an AWS CLI profile in `~/.aws/config` and `~/.aws/credentials`, passed as `--profile NAME`; it must be allowed to read and change SES identities in the domain's account |
-| the records | the [Porkbun credentials](#credentials) |
+| the records | the [Porkbun credentials](#credentials), read by the script to see the zone and by the printed commands to write it |
 
-The two halves never share a credential, so each runs without the other's.
+The two halves never share a credential. Without `--profile` the SES half is skipped; the zone
+is always read, so the Porkbun credentials are required.
 
 ## Mail
 
